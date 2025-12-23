@@ -26,7 +26,7 @@ import {
   HelpCircle,
   Info
 } from 'lucide-react';
-import { studentAuthAPI } from '@/services/api';
+import { studentAuthAPI, storage } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -349,7 +349,7 @@ const StudentDashboard = () => {
   }, []);
 
   useEffect(() => {
-    const data = localStorage.getItem('studentData');
+    const data = storage.getItem('studentData');
     if (!data) {
       navigate('/student/login');
       return;
@@ -389,8 +389,8 @@ const StudentDashboard = () => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('studentToken');
-    localStorage.removeItem('studentData');
+    storage.removeItem('studentToken');
+    storage.removeItem('studentData');
     toast.info('Session terminated: Returning to HQ');
     navigate('/student/login');
   };

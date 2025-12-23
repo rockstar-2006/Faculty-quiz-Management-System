@@ -28,6 +28,14 @@ const getApiUrl = () => {
 
 API_BASE_URL = getApiUrl();
 
+// Storage helper for production: Native stays logged in (localStorage), 
+// Web clears on tab close (sessionStorage) per user requirement.
+export const storage = {
+  getItem: (key: string) => isNative ? localStorage.getItem(key) : sessionStorage.getItem(key),
+  setItem: (key: string, value: string) => isNative ? localStorage.setItem(key, value) : sessionStorage.setItem(key, value),
+  removeItem: (key: string) => isNative ? localStorage.removeItem(key) : sessionStorage.removeItem(key),
+};
+
 if (import.meta.env.DEV) {
   console.log('[API] Platform:', isNative ? 'Native' : 'Web');
   console.log('[API] Base URL:', API_BASE_URL);
@@ -110,8 +118,8 @@ const httpClient = {
     console.log(`🌐 ${method} to: ${url}`);
 
     // Get authentication header
-    const studentToken = localStorage.getItem('studentToken');
-    const teacherToken = localStorage.getItem('token');
+    const studentToken = storage.getItem('studentToken');
+    const teacherToken = storage.getItem('token');
 
     let authHeader = {};
     if (studentToken) {

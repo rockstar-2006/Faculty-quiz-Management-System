@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { Lock, Mail, User, Shield, Eye, EyeOff, Sparkles, ChevronRight, Activity, BadgeCheck, GraduationCap } from 'lucide-react';
-import { studentAuthAPI } from '@/services/api';
+import { studentAuthAPI, storage } from '@/services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -38,8 +38,8 @@ const StudentAppLogin = () => {
     setIsLoading(true);
     try {
       const response = await studentAuthAPI.login(loginData.email, loginData.password);
-      localStorage.setItem('studentToken', response.data.token);
-      localStorage.setItem('studentData', JSON.stringify(response.data.student));
+      storage.setItem('studentToken', response.data.token);
+      storage.setItem('studentData', JSON.stringify(response.data.student));
       toast.success('Login Successful: Welcome back!');
       navigate('/student/dashboard');
     } catch (error: any) {
@@ -71,8 +71,8 @@ const StudentAppLogin = () => {
         year: registerData.year,
         semester: registerData.semester
       });
-      localStorage.setItem('studentToken', response.data.token);
-      localStorage.setItem('studentData', JSON.stringify(response.data.student));
+      storage.setItem('studentToken', response.data.token);
+      storage.setItem('studentData', JSON.stringify(response.data.student));
       toast.success('Account Created: Welcome to the Student Portal');
       navigate('/student/dashboard');
     } catch (error: any) {

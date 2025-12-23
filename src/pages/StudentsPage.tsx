@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { StudentTable } from '@/components/StudentTable';
 import { StudentForm } from '@/components/StudentForm';
 import { parseExcelFile, generateSampleExcel } from '@/services/excelService';
-import { studentsAPI } from '@/services/api';
+import { studentsAPI, storage } from '@/services/api';
 import { Student } from '@/types';
 import { toast } from 'sonner';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
@@ -31,7 +31,7 @@ export default function StudentsPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [activeTab, setActiveTab] = useState('manage');
   const [cohortLabels, setCohortLabels] = useState<Record<string, string>>(() => {
-    const saved = localStorage.getItem('cohortLabels');
+    const saved = storage.getItem('cohortLabels');
     return saved ? JSON.parse(saved) : {};
   });
   const [editingLabel, setEditingLabel] = useState<{ id: string, name: string } | null>(null);
@@ -42,7 +42,7 @@ export default function StudentsPage() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('cohortLabels', JSON.stringify(cohortLabels));
+    storage.setItem('cohortLabels', JSON.stringify(cohortLabels));
   }, [cohortLabels]);
 
   const fetchStudents = async () => {

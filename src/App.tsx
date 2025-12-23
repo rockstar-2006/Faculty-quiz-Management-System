@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { storage } from "./services/api";
 
 import LoadingScreen from "./components/LoadingScreen";
 import LoginPage from "./pages/LoginPage";
@@ -48,8 +49,8 @@ const App = () => {
 
       useEffect(() => {
         const checkAuth = () => {
-          const token = localStorage.getItem('studentToken');
-          const studentData = localStorage.getItem('studentData');
+          const token = storage.getItem('studentToken');
+          const studentData = storage.getItem('studentData');
 
           if (token && studentData) {
             // User is logged in, redirect to dashboard

@@ -25,7 +25,7 @@ import {
   ShieldCheck,
   EyeOff
 } from 'lucide-react';
-import { studentAuthAPI } from '@/services/api';
+import { studentAuthAPI, storage } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -237,10 +237,10 @@ export default function StudentSecureQuiz() {
 
       try {
         setLoading(true);
-        const token = localStorage.getItem('studentToken');
+        const token = storage.getItem('studentToken');
         if (!token) return navigate('/student/login');
 
-        const studentData = localStorage.getItem('studentData');
+        const studentData = storage.getItem('studentData');
         if (studentData) setStudentInfo(JSON.parse(studentData));
 
         const response = await studentAuthAPI.getQuizDetails(quizId);
@@ -263,7 +263,7 @@ export default function StudentSecureQuiz() {
             // If attempt was started but session closed unexpectedly
             console.log('Resuming active session...');
             setAttemptId(existingAttempt.id || existingAttempt._id);
-            setAnswers(JSON.parse(localStorage.getItem(`quiz_answers_${quizId}`) || '{}'));
+            setAnswers(JSON.parse(storage.getItem(`quiz_answers_${quizId}`) || '{}'));
             setQuizStarted(true);
             setTimeLeft(existingAttempt.timeRemaining || 0);
             setTimeout(initializeFullscreen, 100);
@@ -421,7 +421,7 @@ export default function StudentSecureQuiz() {
       if (res.data?.success) {
         setSubmissionResult(res.data.results);
         setQuizSubmitted(true);
-        localStorage.removeItem(`quiz_answers_${quizId}`);
+        storage.removeItem(`quiz_answers_${quizId}`);
         await exitFullscreen();
       }
     } catch (e) {

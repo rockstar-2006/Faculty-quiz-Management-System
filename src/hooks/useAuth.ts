@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import api from '@/services/api';
+import api, { storage } from '@/services/api';
 
 interface User {
   id: string;
@@ -31,7 +31,7 @@ export const useAuth = () => {
     try {
       const response = await api.post('/auth/login', { email, password });
       if (response.data.token) {
-        localStorage.setItem('token', response.data.token);
+        storage.setItem('token', response.data.token);
       }
       setUser(response.data.user);
       return { success: true };
@@ -47,7 +47,7 @@ export const useAuth = () => {
     try {
       const response = await api.post('/auth/register', { name, email, password, role });
       if (response.data.token) {
-        localStorage.setItem('token', response.data.token);
+        storage.setItem('token', response.data.token);
       }
       setUser(response.data.user);
       return { success: true };
@@ -65,7 +65,7 @@ export const useAuth = () => {
     } catch (error) {
       console.error('Logout error:', error);
     }
-    localStorage.removeItem('token');
+    storage.removeItem('token');
     setUser(null);
   };
 
