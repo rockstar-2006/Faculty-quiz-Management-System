@@ -18,11 +18,10 @@ const getApiUrl = () => {
   // Development fallback: use local IP for native apps, localhost for web
   const API_PORT = '3001';
   if (isNative) {
-    // For development, you need to set your computer's IP here
-    // In production, this won't be used as VITE_API_URL will be set
-    const DEV_COMPUTER_IP = '192.168.1.105'; // Change this to your IP during development
-    return `http://${DEV_COMPUTER_IP}:${API_PORT}/api`;
+    // Priority: Use production URL even in dev for easier testing
+    return 'https://backend-android-ios-faculty-web-app.vercel.app/api';
   }
+
 
   return `http://localhost:${API_PORT}/api`;
 };
