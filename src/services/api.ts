@@ -18,8 +18,8 @@ const getApiUrl = () => {
   // Development fallback: use local IP for native apps, localhost for web
   const API_PORT = '3001';
   if (isNative) {
-    // Priority: Use production URL even in dev for easier testing
-    return 'https://backend-android-ios-faculty-web-app.vercel.app/api';
+    // Priority: Use production Render URL
+    return 'https://backend-android-ios-faculty-web-app.onrender.com/api';
   }
 
 
