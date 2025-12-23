@@ -62,15 +62,15 @@ const networkUtils = {
         const response = await CapacitorHttp.request({
           url: testUrl,
           method: 'GET',
-          connectTimeout: 5000,
-          readTimeout: 5000
+          connectTimeout: 20000, // Increase to 20s for Vercel Cold Start
+          readTimeout: 20000
         });
         return response.status >= 200 && response.status < 300;
       }
 
       // Fallback for non-native or dev environments
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
 
       const response = await fetch(testUrl, {
         method: 'GET',
@@ -89,13 +89,13 @@ const networkUtils = {
   // Get helpful network error message
   getNetworkErrorMessage: (error: any): string => {
     const serverInfo = getServerInfo();
-    if (error.message?.includes('unreachable') || error.message?.includes('ERR_ADDRESS_UNREACHABLE')) {
-      return `Cannot connect to server at ${serverInfo.host}:${serverInfo.port}. 
+    if (error.message?.includes('unreachable') || error.message?.includes('ERR_ADDRESS_UNREACHABLE') || error.message?.includes('timeout')) {
+      return `Cannot connect to server. 
 Please check:
-1. Server is running at ${serverInfo.host}:${serverInfo.port}
-2. Both devices are on same WiFi network
-3. Firewall allows port ${serverInfo.port}
-4. Try opening ${serverInfo.fullUrl}/api/health in phone browser`;
+1. You have a stable internet connection.
+2. The server might be waking up (Vercel cold start).
+3. Try refreshing in 10 seconds.
+4. Try opening ${serverInfo.fullUrl}/api/health in your browser to verify connectivity.`;
     }
     return error.message || 'Network error occurred';
   }
@@ -133,6 +133,8 @@ const httpClient = {
           url,
           method,
           headers: mergedHeaders,
+          connectTimeout: 20000,
+          readTimeout: 20000
         };
 
         if (data) {
@@ -187,14 +189,18 @@ const httpClient = {
 
     // Web Platform (Fetch)
     try {
-      console.log(`🖥️ Web ${method} to:`, url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
       const response = await fetch(url, {
         method,
         headers: mergedHeaders,
         body: data ? JSON.stringify(data) : null,
         mode: 'cors',
         credentials: 'include',
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       const result = await response.json().catch(() => ({}));
       console.log(`🖥️ Web response [${response.status}]:`, result);
