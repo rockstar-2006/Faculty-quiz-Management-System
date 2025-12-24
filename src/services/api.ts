@@ -29,11 +29,11 @@ const getApiUrl = () => {
 API_BASE_URL = getApiUrl();
 
 // Storage helper for production: Native stays logged in (localStorage), 
-// Web clears on tab close (sessionStorage) per user requirement.
+// Web stays logged in (localStorage) per user requirement.
 export const storage = {
-  getItem: (key: string) => isNative ? localStorage.getItem(key) : sessionStorage.getItem(key),
-  setItem: (key: string, value: string) => isNative ? localStorage.setItem(key, value) : sessionStorage.setItem(key, value),
-  removeItem: (key: string) => isNative ? localStorage.removeItem(key) : sessionStorage.removeItem(key),
+  getItem: (key: string) => localStorage.getItem(key),
+  setItem: (key: string, value: string) => localStorage.setItem(key, value),
+  removeItem: (key: string) => localStorage.removeItem(key),
 };
 
 if (import.meta.env.DEV) {

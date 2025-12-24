@@ -66,6 +66,12 @@ MCQ RULES:
 - Randomize the position of the correct answer (ensure a balanced distribution of A, B, C, D across the quiz).
 - Avoid repeating the same correct answer letter for consecutive questions (e.g., do not output Answer: C, Answer: C, Answer: C).
 - Ensure all 4 options are distinct and unique.
+- Do NOT simply shuffle the same options. Invent meaningful distractors.
+
+DUPLICATE ANSWER PREVENTION:
+- You MUST minimize the number of times the same option letter (e.g., "A", "B", "C", "D") is the correct answer in a row.
+- Ideally, no more than 2 consecutive questions should have the same correct answer letter.
+- Randomize the pattern of correct answers (e.g., A, C, B, D, A, B...).
 
 OUTPUT FORMAT:
 Return a strictly valid JSON array of objects. No markdown, no intro/outro text.

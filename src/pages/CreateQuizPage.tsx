@@ -175,6 +175,20 @@ export default function CreateQuizPage() {
           });
         }
 
+        // Check for "500 page" timeout risk:
+        // A very rough estimate: 1 page ~= 3000 characters. 500 pages ~= 1,500,000 chars.
+        // Gemini flash context window is massive (1M tokens), but processing time can still time out or hit rate limits.
+        // We will implement a soft cap for "interactive" speed.
+        const CHAR_LIMIT = 500000; // Approx 150-200 pages. Safely processed in one go.
+
+        if (content.length > CHAR_LIMIT) {
+          toast.warning(`${file.name} is very large. Truncating to first ~150 pages to prevent AI timeout.`, {
+            duration: 6000,
+          });
+          content = content.substring(0, CHAR_LIMIT);
+          content += "\n\n[CONTENT TRUNCATED FOR PERFORMANCE]";
+        }
+
         newFiles.push({
           id: `${Date.now()}-${file.name}`,
           name: file.name,
