@@ -182,24 +182,24 @@ export default function StudentsPage() {
       variants={containerVariants}
       initial="hidden"
       animate="show"
-      className="p-6 md:p-8 space-y-10 max-w-7xl mx-auto"
+      className="p-4 md:p-6 lg:p-8 space-y-8 md:space-y-10 max-w-7xl mx-auto"
     >
       {/* Header */}
-      <motion.div variants={itemVariants} className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+      <motion.div variants={itemVariants} className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 md:gap-6">
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-primary font-bold uppercase tracking-[0.2em] text-xs">
             <Users className="w-4 h-4" />
             Registry Management
           </div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tighter uppercase italic">
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black tracking-tighter uppercase italic">
             Student <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Management</span>
           </h1>
-          <p className="text-muted-foreground text-lg font-medium max-w-2xl">
+          <p className="text-muted-foreground text-base md:text-lg font-medium max-w-2xl">
             Maintain accurate student records and manage information across different academic levels.
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap gap-3 md:gap-4 w-full md:w-auto">
           <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
             <Button
               onClick={() => setShowAddForm(true)}
@@ -226,7 +226,7 @@ export default function StudentsPage() {
       </motion.div>
 
       {/* Stats Dashboard */}
-      <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
         {[
           { label: 'Total Registered', value: students.length, sub: `Across ${Object.keys(branchStats).length} Branches`, icon: Users, color: 'primary' },
           { label: 'Active Branches', value: Object.keys(branchStats).length, sub: 'Faculty-wide Distribution', icon: BarChart, color: 'secondary' },
@@ -261,16 +261,16 @@ export default function StudentsPage() {
       {/* Main Interface */}
       <motion.div variants={itemVariants} className="space-y-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="bg-muted/30 p-1.5 h-14 rounded-2xl border border-sidebar-border/50 mb-8">
+          <TabsList className="bg-muted/30 p-1.5 h-auto rounded-2xl border border-sidebar-border/50 mb-8 w-full sm:w-auto sm:h-14">
             <TabsTrigger
               value="manage"
-              className="rounded-xl h-11 px-8 font-bold uppercase text-[10px] tracking-widest data-[state=active]:gradient-primary data-[state=active]:text-white data-[state=active]:shadow-lg transition-all"
+              className="rounded-xl h-10 sm:h-11 flex-1 sm:flex-none px-4 sm:px-8 font-bold uppercase text-[10px] tracking-widest data-[state=active]:gradient-primary data-[state=active]:text-white data-[state=active]:shadow-lg transition-all"
             >
               Student Registry
             </TabsTrigger>
             <TabsTrigger
               value="upload"
-              className="rounded-xl h-11 px-8 font-bold uppercase text-[10px] tracking-widest data-[state=active]:gradient-primary data-[state=active]:text-white data-[state=active]:shadow-lg transition-all"
+              className="rounded-xl h-10 sm:h-11 flex-1 sm:flex-none px-4 sm:px-8 font-bold uppercase text-[10px] tracking-widest data-[state=active]:gradient-primary data-[state=active]:text-white data-[state=active]:shadow-lg transition-all"
             >
               Bulk Upload
             </TabsTrigger>

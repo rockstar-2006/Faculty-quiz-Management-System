@@ -7,7 +7,10 @@ import {
   CalendarClock,
   Plus,
   PlusCircle,
-  FileCode
+  FileCode,
+  Smartphone,
+  Globe,
+  Mail
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -76,6 +79,12 @@ export default function CreateQuizPage() {
   const [quizDescription, setQuizDescription] = useState<string>('');
   const [isLoadingStudents, setIsLoadingStudents] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+
+  // iOS / Browser share dialog state
+  const [iosShareOpen, setIosShareOpen] = useState(false);
+  const [iosSelectedStudents, setIosSelectedStudents] = useState<string[]>([]);
+  const [isIosSharing, setIsIosSharing] = useState(false);
+  const [isSendingWebLinks, setIsSendingWebLinks] = useState(false);
 
   // Scheduling State
   const [isScheduled, setIsScheduled] = useState(false);
@@ -518,8 +527,16 @@ export default function CreateQuizPage() {
         toast.warning(response.data.warning, {
           description: response.data.failed?.[0]?.reason || 'Some students could not be processed'
         });
-      } else {
-        toast.success('Quiz distributed successfully!');
+      }
+
+      const emailQueued = response.data.emailQueued ?? 0;
+      const totalShared = response.data.shared?.length ?? 0;
+      if (totalShared > 0) {
+        toast.success(`Quiz shared with ${totalShared} student(s)!`, {
+          description: emailQueued > 0
+            ? `📧 ${emailQueued} unique email link(s) queued — students will receive their personal quiz link`
+            : 'Students added to quiz.'
+        });
       }
 
       setShareDialogOpen(false);
@@ -530,6 +547,45 @@ export default function CreateQuizPage() {
       toast.error(message);
     } finally {
       setIsSharing(false);
+    }
+  };
+
+  const handleSendWebLinks = async () => {
+    if (selectedStudents.length === 0) {
+      toast.error('Select target students first');
+      return;
+    }
+
+    setIsSendingWebLinks(true);
+    try {
+      let quizIdToUse = savedQuizId;
+      if (!quizIdToUse) {
+        const savedQuiz = await handleSaveQuiz();
+        if (!savedQuiz) return;
+        quizIdToUse = savedQuiz.id;
+      }
+
+      const studentEmails = selectedStudents
+        .map(id => students.find(s => (s.id === id) || ((s as any)._id === id))?.email)
+        .filter((email): email is string => !!email);
+
+      if (studentEmails.length === 0) {
+        toast.error('Could not resolve student emails');
+        return;
+      }
+
+      await quizAPI.sendWebLinks({ quizId: quizIdToUse, studentEmails });
+
+      toast.success(`📧 iPhone/Web link queued for ${studentEmails.length} student(s)!`, {
+        description: 'Each student will receive a personal quiz link via email'
+      });
+      setShareDialogOpen(false);
+      setSelectedStudents([]);
+    } catch (error: any) {
+      console.error('Send web links failed:', error);
+      toast.error(error.response?.data?.message || 'Failed to send web links');
+    } finally {
+      setIsSendingWebLinks(false);
     }
   };
 
@@ -551,7 +607,7 @@ export default function CreateQuizPage() {
       variants={containerVariants}
       initial="hidden"
       animate="show"
-      className="p-6 md:p-8 space-y-10 max-w-7xl mx-auto"
+      className="p-4 md:p-6 lg:p-8 space-y-8 md:space-y-10 max-w-7xl mx-auto"
     >
       {/* Header */}
       <motion.div variants={itemVariants} className="space-y-3">
@@ -559,7 +615,7 @@ export default function CreateQuizPage() {
           <Sparkles className="w-4 h-4" />
           Assessment Builder
         </div>
-        <h1 className="text-4xl md:text-5xl font-black tracking-tighter">
+        <h1 className="text-3xl md:text-4xl lg:text-5xl font-black tracking-tighter">
           Create <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">New Quiz</span>
         </h1>
         <p className="text-muted-foreground text-lg font-medium max-w-3xl">
@@ -998,15 +1054,23 @@ export default function CreateQuizPage() {
                             />
                           </div>
                         </div>
-                        <div className="p-8 border-t bg-muted/30 flex justify-end gap-4">
+                        <div className="p-8 border-t bg-muted/30 flex justify-end gap-3 flex-wrap">
                           <Button variant="ghost" onClick={() => setShareDialogOpen(false)} className="font-black uppercase text-[10px] tracking-widest px-6 h-12">Cancel Selection</Button>
+                          <Button
+                            variant="outline"
+                            onClick={handleSendWebLinks}
+                            disabled={isSendingWebLinks || selectedStudents.length === 0}
+                            className="h-12 px-6 font-black uppercase tracking-widest border-blue-400 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 text-[10px]"
+                          >
+                            {isSendingWebLinks ? '📧 Sending...' : '📱 Send iPhone/Web Link'}
+                          </Button>
                           <Button
                             onClick={handleShareQuiz}
                             disabled={isSharing || selectedStudents.length === 0}
                             className="gradient-primary h-12 px-10 font-black uppercase tracking-widest shadow-glow text-[10px]"
                           >
                             {isSharing ? 'Transmitting...' : (
-                              <span className="flex items-center gap-2">Initiate Distribution <ChevronRight className="w-4 h-4" /></span>
+                              <span className="flex items-center gap-2">🤖 Deploy to Android <ChevronRight className="w-4 h-4" /></span>
                             )}
                           </Button>
                         </div>

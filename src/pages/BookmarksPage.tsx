@@ -62,6 +62,7 @@ export default function BookmarksPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [isSharing, setIsSharing] = useState(false);
+  const [isSendingWebLinks, setIsSendingWebLinks] = useState(false);
   const [isScheduled, setIsScheduled] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('');
@@ -406,6 +407,80 @@ export default function BookmarksPage() {
     }
   };
 
+  const executeSendWebLinks = async () => {
+    if (selectedStudents.length === 0) return toast.error('Select students first');
+    setIsSendingWebLinks(true);
+    try {
+      let quizId;
+
+      if (sharingType === 'folder') {
+        const folderQuestions = bookmarks
+          .filter(b => {
+            const bFolderId = b.folderId && typeof b.folderId === 'object' ? (b.folderId as any)._id : b.folderId;
+            return bFolderId === sharingItem._id && b.question;
+          })
+          .map(b => b.question);
+
+        if (folderQuestions.length === 0) throw new Error("This folder is empty");
+
+        const res = await quizAPI.save({
+          title: sharingItem.name,
+          description: `Shared collection: ${sharingItem.name}`,
+          questions: folderQuestions.map((q: any) => ({ ...q, isSelected: true })),
+          duration: folderQuestions.length * 2,
+          difficulty: 'mixed',
+          questionType: 'mixed',
+          isScheduled,
+          startDate: isScheduled ? startDate : null,
+          startTime: isScheduled ? startTime : null,
+          endDate: isScheduled ? endDate : null,
+          endTime: isScheduled ? endTime : null
+        });
+        quizId = res.data.quizId || res.data.quiz?._id;
+
+      } else if (sharingType === 'question') {
+        const q = sharingItem.question;
+        const res = await quizAPI.save({
+          title: `Practice: ${q.question.substring(0, 20)}...`,
+          questions: [{ ...q, isSelected: true }],
+          duration: 5,
+          difficulty: q.difficulty || 'medium',
+          questionType: q.type || 'mcq'
+        });
+        quizId = res.data.quizId || res.data.quiz?._id;
+
+      } else if (sharingType === 'quiz') {
+        const quizData = sharingItem.quiz;
+        const res = await quizAPI.save({
+          ...quizData,
+          questions: quizData.questions.map((q: any) => ({ ...q, isSelected: true })),
+          title: quizData.title,
+          description: quizData.description
+        });
+        quizId = res.data.quizId || res.data.quiz?._id;
+      }
+
+      if (!quizId) throw new Error("Failed to save quiz");
+
+      const studentEmails = selectedStudents
+        .map(id => students.find(s => s.id === id || (s as any)._id === id)?.email)
+        .filter((e): e is string => !!e);
+
+      await quizAPI.sendWebLinks({ quizId, studentEmails });
+
+      toast.success(`📧 iPhone/Web link queued for ${studentEmails.length} student(s)!`, {
+        description: 'Each student will receive a personal quiz link via email'
+      });
+      setShareDialogOpen(false);
+      setSelectedStudents([]);
+
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to send web links');
+    } finally {
+      setIsSendingWebLinks(false);
+    }
+  };
+
 
   // --- Helper Data ---
   const activeFolder = folders.find(f => f._id === activeFolderId);
@@ -438,27 +513,27 @@ export default function BookmarksPage() {
   const displayedFolders = folders.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <div className="min-h-screen bg-background p-6 md:p-10 space-y-8 max-w-[1600px] mx-auto text-foreground">
+    <div className="min-h-screen bg-background p-4 md:p-6 lg:p-10 space-y-6 md:space-y-8 max-w-[1600px] mx-auto text-foreground">
 
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 relative z-10">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 md:gap-6 relative z-10">
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-primary font-bold uppercase tracking-[0.2em] text-[10px]">
             <BookOpen className="w-4 h-4" /> Library
           </div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tighter uppercase italic text-foreground">
+          <h1 className="text-2xl md:text-4xl lg:text-5xl font-black tracking-tighter uppercase italic text-foreground">
             {activeFolderId ? (
               <span className="flex items-center gap-3 animate-in slide-in-from-left-4 fade-in duration-300">
-                <Button variant="ghost" className="h-12 w-12 p-0 rounded-full bg-muted/20 hover:bg-muted/40" onClick={() => setActiveFolderId(null)}>
-                  <ArrowLeft className="w-6 h-6" />
+                <Button variant="ghost" className="h-10 w-10 md:h-12 md:w-12 p-0 rounded-full bg-muted/20 hover:bg-muted/40" onClick={() => setActiveFolderId(null)}>
+                  <ArrowLeft className="w-5 h-5 md:w-6 md:h-6" />
                 </Button>
-                {activeFolder?.name}
+                <span className="truncate max-w-[200px] md:max-w-none">{activeFolder?.name}</span>
               </span>
             ) : (
               <>Saved <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Collections</span></>
             )}
           </h1>
-          <p className="text-muted-foreground text-sm font-bold uppercase tracking-widest opacity-60 max-w-xl">
+          <p className="text-muted-foreground text-xs md:text-sm font-bold uppercase tracking-widest opacity-60 max-w-xl">
             {activeFolderId
               ? `${displayedBookmarks.length} Items stored in this folder`
               : "Select a folder to view saved questions and quizzes"
@@ -466,7 +541,7 @@ export default function BookmarksPage() {
           </p>
         </div>
 
-        <div className="flex gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto">
           <div className="relative flex-1 md:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -515,7 +590,7 @@ export default function BookmarksPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6"
           >
             {displayedFolders.length === 0 && (
               <div className="col-span-full h-64 flex flex-col items-center justify-center border-2 border-dashed border-border/30 rounded-3xl bg-card/10 text-muted-foreground/50">
@@ -744,15 +819,23 @@ export default function BookmarksPage() {
               <StudentTable students={students} selectedStudents={selectedStudents} onSelectionChange={setSelectedStudents} showCheckboxes={true} />
             </div>
           </div>
-          <div className="p-8 bg-muted/30 border-t flex items-center justify-between">
+          <div className="p-8 bg-muted/30 border-t flex items-center justify-between gap-3">
             <div className="flex flex-col">
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Recipients</span>
               <p className="text-lg font-black uppercase tracking-widest text-primary">{selectedStudents.length} Selected</p>
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-3 justify-end">
               <Button variant="ghost" onClick={() => setShareDialogOpen(false)}>Cancel</Button>
-              <Button onClick={executeShare} disabled={isSharing || selectedStudents.length === 0} className="gradient-primary h-12 px-8 shadow-glow font-black uppercase tracking-widest">
-                {isSharing ? 'Processing...' : 'Deploy Now'}
+              <Button
+                variant="outline"
+                onClick={executeSendWebLinks}
+                disabled={isSendingWebLinks || selectedStudents.length === 0}
+                className="h-12 px-6 font-black uppercase tracking-widest border-blue-400 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 text-[10px]"
+              >
+                {isSendingWebLinks ? '📧 Sending...' : '📱 Send iPhone/Web Link'}
+              </Button>
+              <Button onClick={executeShare} disabled={isSharing || selectedStudents.length === 0} className="gradient-primary h-12 px-8 shadow-glow font-black uppercase tracking-widest text-[10px]">
+                {isSharing ? 'Processing...' : '🤖 Deploy to Android'}
               </Button>
             </div>
           </div>

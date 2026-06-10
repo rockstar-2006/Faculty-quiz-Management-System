@@ -88,7 +88,7 @@ export default function ResultsPage() {
       variants={containerVariants}
       initial="hidden"
       animate="show"
-      className="p-6 md:p-8 space-y-10 max-w-7xl mx-auto"
+      className="p-4 md:p-6 lg:p-8 space-y-8 md:space-y-10 max-w-7xl mx-auto"
     >
       {/* Header */}
       <motion.div variants={itemVariants} className="space-y-3">
@@ -96,7 +96,7 @@ export default function ResultsPage() {
           <BarChart3 className="w-4 h-4" />
           Assessment Analytics
         </div>
-        <h1 className="text-4xl md:text-5xl font-black tracking-tighter">
+        <h1 className="text-3xl md:text-4xl lg:text-5xl font-black tracking-tighter">
           Performance <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Reports</span>
         </h1>
         <p className="text-muted-foreground text-lg font-medium max-w-3xl">
@@ -122,7 +122,7 @@ export default function ResultsPage() {
           </Card>
         </motion.div>
       ) : (
-        <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:gap-8 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {quizzes.map((quiz, idx) => (
             <motion.div
               key={quiz._id}

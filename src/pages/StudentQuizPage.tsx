@@ -118,6 +118,7 @@ export default function StudentQuizPage() {
   const [email, setEmail] = useState('');
 
   const [showInfoForm, setShowInfoForm] = useState(false);
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
   const [studentName, setStudentName] = useState('');
   const [studentUSN, setStudentUSN] = useState('');
   const [studentBranch, setStudentBranch] = useState('');
@@ -139,6 +140,7 @@ export default function StudentQuizPage() {
   const [isBlocked, setIsBlocked] = useState(false);
   const [remainingEscapeTime, setRemainingEscapeTime] = useState(30);
   const [isOutsideApp, setIsOutsideApp] = useState(false);
+  const [blurIntensity, setBlurIntensity] = useState(0); // NEW: blur overlay intensity
 
   // Refs
   const lastViolationTime = useRef<number>(0);
@@ -147,6 +149,10 @@ export default function StudentQuizPage() {
   const escapeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isOutsideAppRef = useRef(false);
   const warningCountRef = useRef(0);
+  const lastFocusEventTime = useRef(0);             // NEW: debounce focus events
+  const originalDimensions = useRef({ w: 0, h: 0 }); // NEW: split-screen detection
+  const devtoolsInterval = useRef<NodeJS.Timeout | null>(null); // NEW: devtools check
+  const handleSubmitRef = useRef<(auto?: boolean, reason?: string) => void>(() => {}); // NEW: stable ref
 
   useEffect(() => {
     fetchQuizData();
@@ -164,8 +170,30 @@ export default function StudentQuizPage() {
     setLastViolation(reason);
     toast.error(`SECURITY ALERT [${next}/3]`, { description: reason, position: 'top-center' });
 
+    // Log violation to backend
+    if (attemptId) {
+      axios.post(`${API_URL}/student-quiz/attempt/log-violation`, {
+        attemptId,
+        violationType: 'keyboard-shortcut',
+        reason
+      }).then(res => {
+        if (res.data?.blocked) {
+          setIsBlocked(true);
+          setBlurIntensity(20);
+        }
+      }).catch(() => {
+        // Retry once (Requirement 5.3)
+        axios.post(`${API_URL}/student-quiz/attempt/log-violation`, {
+          attemptId,
+          violationType: 'keyboard-shortcut',
+          reason
+        }).catch(err2 => console.error('Violation logging retry failed', err2));
+      });
+    }
+
     if (next >= 3) {
       setIsBlocked(true);
+      setBlurIntensity(20);
       handleSubmitQuiz(true, `Strikes Exceeded: ${reason}`);
     } else {
       isSecurityPaused.current = true;
@@ -179,16 +207,18 @@ export default function StudentQuizPage() {
   // Keep refs in sync with state
   useEffect(() => { isOutsideAppRef.current = isOutsideApp; }, [isOutsideApp]);
 
-  // 🔒 30-Second Escape Buffer Timer — runs independently when outside app
+  // 🔒 30-Second Escape Buffer Timer
   useEffect(() => {
     if (!quizStarted || quizSubmitted || isBlocked) return;
 
     if (isOutsideApp) {
+      setBlurIntensity(15);
       escapeTimerRef.current = setInterval(() => {
         setRemainingEscapeTime(prev => {
           if (prev <= 1) {
             setIsBlocked(true);
-            handleSubmitQuiz(true, 'Total Escape Time Exceeded (30s)');
+            setBlurIntensity(25);
+            handleSubmitRef.current(true, 'Total Escape Time Exceeded (30s)');
             if (escapeTimerRef.current) clearInterval(escapeTimerRef.current);
             return 0;
           }
@@ -196,83 +226,212 @@ export default function StudentQuizPage() {
         });
       }, 1000);
     } else {
-      if (escapeTimerRef.current) {
-        clearInterval(escapeTimerRef.current);
-        escapeTimerRef.current = null;
-      }
+      if (escapeTimerRef.current) { clearInterval(escapeTimerRef.current); escapeTimerRef.current = null; }
+      setBlurIntensity(0);
       setRemainingEscapeTime(30);
     }
 
-    return () => {
-      if (escapeTimerRef.current) {
-        clearInterval(escapeTimerRef.current);
-        escapeTimerRef.current = null;
-      }
-    };
+    return () => { if (escapeTimerRef.current) { clearInterval(escapeTimerRef.current); escapeTimerRef.current = null; } };
   }, [isOutsideApp, quizStarted, quizSubmitted, isBlocked]);
 
+  // 🌐 BROWSER SECURITY LAYER — focus/visibility/keyboard/devtools
   useEffect(() => {
     if (!quizStarted || quizSubmitted || isBlocked) return;
 
+    // Store original dimensions once for split-screen detection
+    if (originalDimensions.current.w === 0) {
+      originalDimensions.current = { w: window.innerWidth, h: window.innerHeight };
+    }
+
+    const debounce = (fn: () => void) => {
+      const now = Date.now();
+      if (now - lastFocusEventTime.current < 800) return;
+      lastFocusEventTime.current = now;
+      fn();
+    };
+
     const handleFocusLoss = (reason: string) => {
       if (isSecurityPaused.current || isTransitioning.current || isBlocked) return;
-      if (isOutsideAppRef.current) return; // Already flagged
-      setIsOutsideApp(true);
-      toast.error('URGENT SAFETY ALERT', { 
-        description: 'You have left the secure exam interface. Return immediately.',
-        duration: 30000,
-        position: 'top-center'
+      if (isOutsideAppRef.current) return;
+      debounce(() => {
+        isOutsideAppRef.current = true;
+        setIsOutsideApp(true);
+        setBlurIntensity(12);
+        toast.error('🚨 SECURITY ALERT', {
+          description: 'You left the exam. Return immediately or your session will terminate.',
+          duration: 30000,
+          position: 'top-center'
+        });
       });
     };
 
     const handleFocusGain = () => {
-      if (!isOutsideAppRef.current) return; // Not flagged
-      if (isSecurityPaused.current) return; // Already handling
-      setIsOutsideApp(false);
+      if (!isOutsideAppRef.current) return;
+      if (isSecurityPaused.current) return;
+      debounce(() => {
+        isOutsideAppRef.current = false;
+        setIsOutsideApp(false);
+        setBlurIntensity(0);
+        setRemainingEscapeTime(30);
 
-      // Issue a strike on return
-      const next = warningCountRef.current + 1;
-      warningCountRef.current = next;
-      setWarningCount(next);
-      setLastViolation('Loss of Focus / Application Switch');
-      
-      if (next >= 3) {
-        setIsBlocked(true);
-        handleSubmitQuiz(true, 'Maximum Violations Reached');
-      } else {
-        isSecurityPaused.current = true;
-        setShowWarningModal(true);
-      }
-      toast.success(`Focus restored. Strike ${next} of 3 issued.`, { position: 'top-center' });
+        const next = warningCountRef.current + 1;
+        warningCountRef.current = next;
+        setWarningCount(next);
+        setLastViolation('Tab switch / Focus loss detected');
+
+        // Log violation to backend
+        if (attemptId) {
+          axios.post(`${API_URL}/student-quiz/attempt/log-violation`, {
+            attemptId,
+            violationType: 'app-switch',
+            reason: 'Tab switch / Focus loss detected'
+          }).then(res => {
+            if (res.data?.blocked) {
+              setIsBlocked(true);
+              setBlurIntensity(20);
+            }
+          }).catch(() => {
+            // Retry once
+            axios.post(`${API_URL}/student-quiz/attempt/log-violation`, {
+              attemptId,
+              violationType: 'app-switch',
+              reason: 'Tab switch / Focus loss detected'
+            }).catch(err2 => console.error('Violation logging retry failed', err2));
+          });
+        }
+
+        if (next >= 3) {
+          setIsBlocked(true);
+          setBlurIntensity(20);
+          handleSubmitRef.current(true, 'Maximum Violations Reached');
+        } else {
+          isSecurityPaused.current = true;
+          setShowWarningModal(true);
+        }
+        toast.success(`✓ Focus restored. Strike ${next} of 3.`);
+      });
     };
 
     const handleBlur = () => {
-      if (!document.hasFocus()) {
-        handleFocusLoss('Focus lost to external app or notification');
-      }
+      setTimeout(() => {
+        if (!document.hasFocus() && !isTransitioning.current) {
+          handleFocusLoss('Focus lost to external app or notification');
+        }
+      }, 150);
     };
 
     const handleVisibility = () => {
       if (document.hidden) {
-        handleFocusLoss('Screen minimized or tab switch');
-      } else {
+        handleFocusLoss('Tab switched or screen minimised');
+      } else if (isOutsideAppRef.current) {
         handleFocusGain();
       }
     };
-    
-    const handleFocus = () => handleFocusGain();
+
+    const handleFocus = () => {
+      if (isOutsideAppRef.current && !document.hidden) handleFocusGain();
+    };
+
+    // Block keyboard shortcuts: F12, Ctrl+Shift+I/J/C, Ctrl+U
+    const blockShortcuts = (e: KeyboardEvent) => {
+      if (
+        e.key === 'F12' ||
+        (e.ctrlKey && e.shiftKey && ['I', 'J', 'C', 'i', 'j', 'c'].includes(e.key)) ||
+        (e.ctrlKey && (e.key === 'u' || e.key === 'U')) ||
+        (e.metaKey && e.altKey && (e.key === 'i' || e.key === 'I')) // Safari devtools
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerViolation('Developer tools shortcut detected');
+      }
+    };
+
+    // Block right-click context menu
+    const blockContextMenu = (e: MouseEvent) => e.preventDefault();
+
+    // Block copy / cut / paste / drag
+    const blockExtraction = (e: ClipboardEvent | DragEvent) => {
+      e.preventDefault();
+      toast.error('Content protection active — copying is disabled.', { position: 'top-center', duration: 2000 });
+    };
+
+    // Warn before leaving page
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    // 🔍 Polling monitor: overlay apps, split-screen, devtools open
+    const monitorSecurity = () => {
+      if (!quizStarted || quizSubmitted || isBlocked || isTransitioning.current) return;
+
+      // Overlay app or floating window: focus gone but page visible
+      if (!document.hasFocus() && !document.hidden && !isOutsideAppRef.current && !isSecurityPaused.current) {
+        const now = Date.now();
+        if (now - lastFocusEventTime.current >= 800) {
+          handleFocusLoss('Floating app or overlay detected above exam');
+        }
+      }
+      // Focus returned after overlay
+      if (document.hasFocus() && !document.hidden && isOutsideAppRef.current) {
+        const now = Date.now();
+        if (now - lastFocusEventTime.current >= 800) handleFocusGain();
+      }
+
+      // Split-screen: window shrank significantly
+      const { w: ow, h: oh } = originalDimensions.current;
+      if (ow > 0) {
+        const isSplit = window.innerWidth < ow * 0.7 || window.innerHeight < oh * 0.7;
+        if (isSplit && !isOutsideAppRef.current && !isSecurityPaused.current) {
+          const now = Date.now();
+          if (now - lastFocusEventTime.current >= 800) {
+            handleFocusLoss('Split-screen or window resize detected');
+          }
+        }
+      }
+
+      // DevTools: significant difference between outer and inner window size (desktop)
+      const devtoolsOpen =
+        window.outerWidth - window.innerWidth > 160 ||
+        window.outerHeight - window.innerHeight > 160;
+      if (devtoolsOpen && !isSecurityPaused.current) {
+        const now = Date.now();
+        if (now - lastViolationTime.current > 5000) {
+          lastViolationTime.current = now;
+          toast.error('DevTools detected — this is a proctored exam.', { position: 'top-center' });
+          handleFocusLoss('Browser DevTools opened');
+        }
+      }
+    };
+
+    const monitorInterval = setInterval(monitorSecurity, 500);
 
     window.addEventListener('blur', handleBlur, true);
     window.addEventListener('visibilitychange', handleVisibility, true);
     window.addEventListener('focus', handleFocus, true);
+    window.addEventListener('keydown', blockShortcuts, true);
+    window.addEventListener('contextmenu', blockContextMenu);
+    window.addEventListener('copy', blockExtraction as EventListener);
+    window.addEventListener('cut', blockExtraction as EventListener);
+    window.addEventListener('paste', blockExtraction as EventListener);
+    window.addEventListener('dragstart', blockExtraction as EventListener);
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
+      clearInterval(monitorInterval);
       window.removeEventListener('blur', handleBlur, true);
       window.removeEventListener('visibilitychange', handleVisibility, true);
       window.removeEventListener('focus', handleFocus, true);
+      window.removeEventListener('keydown', blockShortcuts, true);
+      window.removeEventListener('contextmenu', blockContextMenu);
+      window.removeEventListener('copy', blockExtraction as EventListener);
+      window.removeEventListener('cut', blockExtraction as EventListener);
+      window.removeEventListener('paste', blockExtraction as EventListener);
+      window.removeEventListener('dragstart', blockExtraction as EventListener);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       if (focusTimeoutRef.current) clearTimeout(focusTimeoutRef.current);
     };
-  }, [quizStarted, quizSubmitted, isBlocked, triggerViolation]);
+  }, [quizStarted, quizSubmitted, isBlocked, attemptId, triggerViolation]);
 
   useEffect(() => {
     if (quizStarted && timeLeft > 0) {
@@ -290,6 +449,20 @@ export default function StudentQuizPage() {
     }
   }, [quizStarted, timeLeft]);
 
+  // Real-time answers auto-save
+  useEffect(() => {
+    if (!quizStarted || quizSubmitted || isBlocked || !attemptId || answers.length === 0) return;
+
+    const saveTimeout = setTimeout(() => {
+      axios.post(`${API_URL}/student-quiz/attempt/save-progress`, {
+        attemptId,
+        answers
+      }).catch(err => console.error('Failed to save quiz progress:', err));
+    }, 2000); // 2-second debounce
+
+    return () => clearTimeout(saveTimeout);
+  }, [answers, quizStarted, quizSubmitted, isBlocked, attemptId]);
+
   const fetchQuizData = async () => {
     try {
       const response = await axios.get(`${API_URL}/student-quiz/attempt/${token}`);
@@ -298,7 +471,7 @@ export default function StudentQuizPage() {
       if (data.alreadySubmitted) {
         toast.info('Session Logged: Multiple attempts prohibited');
         setQuizSubmitted(true);
-        setResults(data.existingResults || null);
+        setResults(data.existingResults || data.results || null);
         setLoading(false);
         return;
       }
@@ -306,13 +479,48 @@ export default function StudentQuizPage() {
       setQuiz(data.quiz);
       setEmail(data.email);
 
+      // Pre-populate student details if returned from backend
+      if (data.studentInfo) {
+        setStudentName(data.studentInfo.name || '');
+        setStudentUSN(data.studentInfo.usn || '');
+        setStudentBranch(data.studentInfo.branch || '');
+        setStudentYear(data.studentInfo.year || '');
+        setStudentSemester(data.studentInfo.semester || '');
+      }
+
+      if (data.isBlocked) {
+        setIsBlocked(true);
+        setBlurIntensity(20);
+        setAttemptId(data.attemptId || '');
+        setQuizStarted(true);
+        setWarningCount(data.violationCount || 3);
+        warningCountRef.current = data.violationCount || 3;
+        setLastViolation(data.violationReason || 'Security violations detected during quiz attempt.');
+        setLoading(false);
+        return;
+      }
+
       if (data.hasStarted && data.attemptId) {
         setAttemptId(data.attemptId);
         setQuizStarted(true);
-        setAnswers(new Array(data.quiz.questions.length).fill(''));
-        setTimeLeft((data.quiz.duration || 30) * 60);
-        setStudentName(data.studentInfo.name);
-        setStudentUSN(data.studentInfo.usn);
+        
+        // Restore answers (progress)
+        if (data.answers && Array.isArray(data.answers)) {
+          setAnswers(data.answers);
+        } else {
+          setAnswers(new Array(data.quiz.questions.length).fill(''));
+        }
+
+        // Restore remaining time
+        if (data.timeRemaining !== null && data.timeRemaining !== undefined) {
+          setTimeLeft(data.timeRemaining);
+        } else {
+          setTimeLeft((data.quiz.duration || 30) * 60);
+        }
+
+        // Restore warning count
+        setWarningCount(data.violationCount || 0);
+        warningCountRef.current = data.violationCount || 0;
       } else {
         setShowInfoForm(true);
       }
@@ -349,6 +557,19 @@ export default function StudentQuizPage() {
       setQuizStarted(true);
       setShowInfoForm(false);
 
+      // 🌐 Request fullscreen for browser security (graceful on iOS Safari)
+      isTransitioning.current = true;
+      try {
+        const el = document.documentElement as any;
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen(); // Safari
+        else if (el.mozRequestFullScreen) await el.mozRequestFullScreen();      // Firefox old
+      } catch { /* iOS Safari doesn't support fullscreen — silently ignore */ }
+      setTimeout(() => { isTransitioning.current = false; }, 1200);
+
+      // Store original window dimensions for split-screen detection
+      originalDimensions.current = { w: window.innerWidth, h: window.innerHeight };
+
       toast.success('Assessment Initialized');
     } catch (error: any) {
       console.error('Error starting quiz:', error);
@@ -362,6 +583,11 @@ export default function StudentQuizPage() {
     if (submitting || quizSubmitted) return;
 
     setSubmitting(true);
+    // Exit fullscreen on submit
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+    } catch { /* ignore */ }
+
     try {
       const response = await axios.post(`${API_URL}/student-quiz/attempt/submit`, {
         attemptId,
@@ -385,6 +611,10 @@ export default function StudentQuizPage() {
     newAnswers[currentQuestion] = value;
     setAnswers(newAnswers);
   };
+
+  // Keep submit ref in sync — must be after handleSubmitQuiz declaration
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { handleSubmitRef.current = handleSubmitQuiz; });
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -413,6 +643,61 @@ export default function StudentQuizPage() {
           <div className="w-12 h-12 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin" />
           <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 animate-pulse">Loading Quiz Content...</p>
         </motion.div>
+      </div>
+    );
+  }
+
+  // Show blocked screen if quiz access is denied due to violations
+  if (isBlocked) {
+    return (
+      <div className="min-h-screen w-full bg-gradient-to-br from-red-50 via-white to-pink-50 flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="max-w-md mx-auto space-y-6 animate-in fade-in duration-300">
+          <div className="flex justify-center">
+            <div className="relative">
+              <div className="absolute inset-0 w-32 h-32 bg-red-600 rounded-full blur-2xl opacity-30 animate-pulse" />
+              <div className="relative w-32 h-32 bg-red-600 rounded-full flex items-center justify-center shadow-2xl shadow-red-600/30">
+                <ShieldAlert className="w-16 h-16 text-white" />
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <h1 className="text-3xl font-black text-red-600 mb-2">⚠️ Quiz Access Blocked</h1>
+            <p className="text-slate-600 font-bold text-base leading-relaxed">
+              Your attempt to complete this quiz was terminated due to security violations. The quiz has been permanently blocked.
+            </p>
+          </div>
+
+          <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 text-left space-y-2">
+            <p className="font-black text-sm text-red-600 uppercase tracking-wide">❌ Reason for Block:</p>
+            <p className="text-slate-700 font-bold">"{lastViolation || 'Multiple security violations detected during attempt.'}"</p>
+            <p className="text-sm text-slate-600 mt-3 font-semibold">Logged violation details:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-slate-500 ml-2 font-bold">
+              <li>Loss of window focus / tab switching</li>
+              <li>Developer tools shortcuts (F12, Ctrl+U, etc.)</li>
+              <li>Split-screen / window resizing attempts</li>
+              <li>Strikes limit exceeded (3 strikes issued)</li>
+            </ul>
+          </div>
+
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 text-left">
+            <p className="font-black text-sm text-blue-600 uppercase tracking-wide mb-2">📞 What To Do:</p>
+            <p className="text-slate-700 font-bold text-sm">Contact your instructor to:</p>
+            <ul className="list-disc list-inside space-y-1 text-sm text-slate-600 mt-2 ml-2 font-semibold">
+              <li>Review your proctoring logs</li>
+              <li>Request quiz unblocking</li>
+            </ul>
+          </div>
+
+          <div className="pt-4">
+            <Button
+              onClick={() => navigate('/')}
+              className="w-full h-14 bg-slate-900 hover:bg-black text-white rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl transition-all active:scale-95"
+            >
+              Return to Base
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -492,6 +777,8 @@ export default function StudentQuizPage() {
   }
 
   if (showInfoForm && quiz) {
+    const hasPrefetchedInfo = studentName && studentUSN && studentBranch && studentYear && studentSemester;
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#FBFDFF] p-6 overflow-hidden relative select-none">
         <motion.div variants={containerVariants} initial="hidden" animate="show" className="max-w-xl w-full relative z-10">
@@ -503,84 +790,163 @@ export default function StudentQuizPage() {
               </div>
               <CardTitle className="text-4xl font-black tracking-tight text-slate-900 uppercase">{quiz.title}</CardTitle>
               <CardDescription className="font-bold text-xs uppercase tracking-widest text-slate-400 mt-2">
-                Please provide your details to begin the exam session.
+                {hasPrefetchedInfo && !isEditingDetails
+                  ? "We found your student profile. Please confirm details below."
+                  : "Please provide your details to begin the exam session."}
               </CardDescription>
             </CardHeader>
             <CardContent className="p-10 pt-4 space-y-6">
-              <div className="grid gap-6">
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">Full Legal Name</Label>
-                  <Input
-                    value={studentName}
-                    onChange={(e) => setStudentName(e.target.value)}
-                    placeholder="E.g. John Doe"
-                    className="h-12 bg-slate-50 border-slate-100 font-bold uppercase text-xs tracking-wider rounded-xl focus:ring-indigo-100"
-                  />
+              {/* iOS Safari Guidance Banner */}
+              {!document.documentElement.requestFullscreen && (
+                <div className="bg-amber-50 border-2 border-amber-200 rounded-3xl p-5 text-left space-y-2 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-2 text-amber-800 font-black text-xs uppercase tracking-wider">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" /> iOS Safari Notice
+                  </div>
+                  <p className="text-xs text-amber-700 font-bold leading-relaxed">
+                    Fullscreen API is not natively supported in standard iOS Safari tabs. For the best proctored experience and to avoid accidental focus loss:
+                  </p>
+                  <ul className="list-disc list-inside text-[11px] text-amber-700 font-semibold space-y-1 ml-1">
+                    <li>Tap the <span className="font-bold">Share button (up arrow in box)</span> in Safari</li>
+                    <li>Select <span className="font-bold">"Add to Home Screen"</span> and launch from your home screen</li>
+                    <li>Otherwise, ensure all notifications/focus modes are disabled before starting</li>
+                  </ul>
                 </div>
+              )}
 
-                <div className="grid grid-cols-2 gap-4">
+              {hasPrefetchedInfo && !isEditingDetails ? (
+                // Premium Summary Card for pre-fetched info
+                <div className="space-y-6">
+                  <div className="bg-gradient-to-br from-indigo-50/50 via-slate-50 to-indigo-50/30 rounded-3xl border border-indigo-100/60 p-6 sm:p-8 space-y-6 relative overflow-hidden">
+                    <div className="absolute top-4 right-4 w-10 h-10 rounded-full bg-teal-50 border border-teal-100 flex items-center justify-center">
+                      <BadgeCheck className="w-6 h-6 text-teal-600" />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest block">Student Name</span>
+                      <p className="text-xl font-bold text-slate-900 leading-snug">{studentName}</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">USN Number</span>
+                        <p className="text-sm font-bold text-slate-800 tracking-wide">{studentUSN}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Department</span>
+                        <p className="text-sm font-bold text-slate-800">{studentBranch} Department</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100/80">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Current Year</span>
+                        <p className="text-sm font-bold text-slate-800">Year {studentYear}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Semester</span>
+                        <p className="text-sm font-bold text-slate-800">Semester {studentSemester}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between px-2">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Wrong profile?</span>
+                    <button 
+                      onClick={() => setIsEditingDetails(true)}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-black uppercase tracking-widest"
+                    >
+                      Edit Details
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                // Original editable form fields
+                <div className="grid gap-6">
                   <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">USN Number</Label>
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">Full Legal Name</Label>
                     <Input
-                      value={studentUSN}
-                      onChange={(e) => setStudentUSN(e.target.value.toUpperCase())}
-                      placeholder="1XX21CS001"
+                      value={studentName}
+                      onChange={(e) => setStudentName(e.target.value)}
+                      placeholder="E.g. John Doe"
                       className="h-12 bg-slate-50 border-slate-100 font-bold uppercase text-xs tracking-wider rounded-xl focus:ring-indigo-100"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">Email Address</Label>
-                    <Input
-                      value={email}
-                      disabled
-                      className="h-12 bg-slate-100 border-slate-200 font-bold text-xs tracking-wider opacity-60 rounded-xl"
-                    />
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">USN Number</Label>
+                      <Input
+                        value={studentUSN}
+                        onChange={(e) => setStudentUSN(e.target.value.toUpperCase())}
+                        placeholder="1XX21CS001"
+                        className="h-12 bg-slate-50 border-slate-100 font-bold uppercase text-xs tracking-wider rounded-xl focus:ring-indigo-100"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">Email Address</Label>
+                      <Input
+                        value={email}
+                        disabled
+                        className="h-12 bg-slate-100 border-slate-200 font-bold text-xs tracking-wider opacity-60 rounded-xl"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">Department</Label>
-                  <Select value={studentBranch} onValueChange={setStudentBranch}>
-                    <SelectTrigger className="h-12 bg-slate-50 border-slate-100 font-bold uppercase text-[10px] tracking-widest rounded-xl">
-                      <SelectValue placeholder="Select Your Branch" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {['CSE', 'ISE', 'ECE', 'EEE', 'ME', 'CE'].map(branch => (
-                        <SelectItem key={branch} value={branch} className="font-bold uppercase text-[10px]">{branch} Department</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/80 pl-1">CURRENT YEAR</Label>
-                    <Select value={studentYear} onValueChange={setStudentYear}>
-                      <SelectTrigger className="h-12 bg-muted/20 border-sidebar-border/50 font-bold uppercase text-[10px] tracking-widest">
-                        <SelectValue />
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1">Department</Label>
+                    <Select value={studentBranch} onValueChange={setStudentBranch}>
+                      <SelectTrigger className="h-12 bg-slate-50 border-slate-100 font-bold uppercase text-[10px] tracking-widest rounded-xl">
+                        <SelectValue placeholder="Select Your Branch" />
                       </SelectTrigger>
                       <SelectContent>
-                        {['1', '2', '3', '4'].map(y => (
-                          <SelectItem key={y} value={y} className="font-bold uppercase text-[10px]">YEAR {y}</SelectItem>
+                        {['CSE', 'ISE', 'ECE', 'EEE', 'ME', 'CE'].map(branch => (
+                          <SelectItem key={branch} value={branch} className="font-bold uppercase text-[10px]">{branch} Department</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/80 pl-1">SEMESTER</Label>
-                    <Select value={studentSemester} onValueChange={setStudentSemester}>
-                      <SelectTrigger className="h-12 bg-muted/20 border-sidebar-border/50 font-bold uppercase text-[10px] tracking-widest">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                          <SelectItem key={s} value={s.toString()} className="font-bold uppercase text-[10px]">SEM {s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/80 pl-1">CURRENT YEAR</Label>
+                      <Select value={studentYear} onValueChange={setStudentYear}>
+                        <SelectTrigger className="h-12 bg-muted/20 border-sidebar-border/50 font-bold uppercase text-[10px] tracking-widest">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {['1', '2', '3', '4'].map(y => (
+                            <SelectItem key={y} value={y} className="font-bold uppercase text-[10px]">YEAR {y}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/80 pl-1">SEMESTER</Label>
+                      <Select value={studentSemester} onValueChange={setStudentSemester}>
+                        <SelectTrigger className="h-12 bg-muted/20 border-sidebar-border/50 font-bold uppercase text-[10px] tracking-widest">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                            <SelectItem key={s} value={s.toString()} className="font-bold uppercase text-[10px]">SEM {s}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
+
+                  {hasPrefetchedInfo && (
+                    <div className="flex justify-end px-2">
+                      <button 
+                        onClick={() => setIsEditingDetails(false)}
+                        className="text-xs text-slate-500 hover:text-slate-700 font-bold uppercase tracking-widest"
+                      >
+                        Cancel Editing
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
 
               <Button
                 onClick={handleStartQuiz}
@@ -605,85 +971,108 @@ export default function StudentQuizPage() {
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
 
     return (
-      <div className={cn(
-        "min-h-screen bg-white relative overflow-hidden flex flex-col select-none",
-        isOutsideApp && "filter blur-2xl pointer-events-none grayscale"
-      )}>
+      <div
+        className="min-h-screen bg-white relative overflow-hidden flex flex-col select-none"
+        style={{
+          filter: blurIntensity > 0 ? `blur(${blurIntensity}px) grayscale(${Math.min(blurIntensity * 3, 80)}%)` : 'none',
+          transition: 'filter 0.3s ease-in-out',
+          pointerEvents: 'auto',
+        }}
+        onClick={() => { if (blurIntensity > 0) { setBlurIntensity(0); setIsOutsideApp(false); } }}
+      >
         <style>{`
-          * {
-            -webkit-user-select: none;
-            user-select: none;
-          }
-          @media print {
-            body { display: none !important; }
-          }
+          * { -webkit-user-select: none; user-select: none; }
+          @media print { body { display: none !important; } }
         `}</style>
 
+        {/* 🚨 Security Overlay — blur countdown (same as native app) */}
         {isOutsideApp && (
-          <div className="fixed inset-0 z-[100] bg-slate-900/90 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300">
-             <div className="w-24 h-24 bg-red-600 rounded-2xl flex items-center justify-center mb-8 animate-pulse shadow-2xl">
-               <ShieldAlert className="w-12 h-12 text-white" />
-             </div>
-             <h2 className="text-3xl font-black text-white tracking-tight mb-2 uppercase">Out of Workspace</h2>
-             <p className="text-red-400 font-bold text-sm mb-10 max-w-xs uppercase tracking-widest">Return to the exam immediately. TERMINATION AT:</p>
-             <div className="text-7xl font-black text-white tabular-nums tracking-tighter mb-4">
-               {remainingEscapeTime}S
-             </div>
-             <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Safety Warning {warningCount + 1} of 3</p>
+          <div
+            className="fixed inset-0 z-[100] bg-gradient-to-br from-black/95 via-red-900/90 to-black/95 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300"
+            onClick={(e) => { e.stopPropagation(); if (document.hasFocus()) { setIsOutsideApp(false); setBlurIntensity(0); } }}
+          >
+            <div className="mb-6 relative">
+              <div className="absolute inset-0 w-20 h-20 sm:w-24 sm:h-24 bg-red-600 rounded-full blur-2xl opacity-50 animate-pulse" />
+              <div className="relative w-20 h-20 sm:w-24 sm:h-24 bg-red-600 rounded-full flex items-center justify-center shadow-2xl animate-bounce">
+                <ShieldAlert className="w-10 h-10 sm:w-12 sm:h-12 text-white" />
+              </div>
+            </div>
+            <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight mb-2 uppercase">⚠️ SECURITY VIOLATION</h2>
+            <p className="text-red-200 font-bold text-sm mb-8 max-w-xs leading-relaxed">
+              FOCUS LOSS DETECTED<br />
+              <span className="text-white/70 text-xs">Return immediately or session will terminate</span>
+            </p>
+            <div className="text-6xl sm:text-8xl font-black text-white tabular-nums tracking-tighter drop-shadow-2xl font-mono mb-3">
+              {remainingEscapeTime}s
+            </div>
+            <p className="text-white/50 text-xs font-bold uppercase tracking-widest mb-8">Time Remaining</p>
+            <button
+              className="px-8 py-3 bg-white/10 border border-white/20 rounded-2xl text-white font-bold text-sm uppercase tracking-widest hover:bg-white/20 active:scale-95 transition-all"
+              onClick={(e) => { e.stopPropagation(); setIsOutsideApp(false); setBlurIntensity(0); }}
+            >
+              Tap to Return to Exam
+            </button>
+            <div className="flex gap-2 mt-8">
+              {[1, 2, 3].map(i => (
+                <div key={i} className={cn('w-2 h-2 rounded-full transition-all', i <= warningCount ? 'bg-red-500 scale-125' : 'bg-white/30')} />
+              ))}
+            </div>
+            <p className="text-white/50 text-xs font-bold uppercase tracking-widest mt-4">Strike {warningCount} of 3</p>
           </div>
         )}
 
         {/* Assessment Header */}
         <header className="bg-white/80 backdrop-blur-2xl border-b border-slate-100 sticky top-0 z-50">
-          <div className="max-w-5xl mx-auto px-6 py-6">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-8">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-100 border border-indigo-500">
-                  <Zap className="h-6 w-6" />
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 sm:py-6">
+            <div className="flex items-center justify-between gap-3 sm:gap-6 mb-3 sm:mb-8">
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-100 border border-indigo-500 shrink-0">
+                  <Zap className="h-5 w-5 sm:h-6 sm:w-6" />
                 </div>
-                <div>
-                  <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase leading-none">{quiz.title}</h1>
-                  <div className="flex items-center gap-3 mt-1.5 font-bold uppercase text-[8px] tracking-[0.2em] text-slate-400 italic">
+                <div className="min-w-0">
+                  <h1 className="text-sm sm:text-xl md:text-2xl font-black tracking-tight text-slate-900 uppercase leading-none truncate max-w-[130px] sm:max-w-xs md:max-w-none">{quiz.title}</h1>
+                  <div className="hidden sm:flex items-center gap-3 mt-1.5 font-bold uppercase text-[8px] tracking-[0.2em] text-slate-400 italic">
                     <Activity className="w-3 h-3 text-indigo-600 animate-pulse" />
                     Exam ID: {attemptId.slice(-8)}
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-8 bg-slate-50 p-4 rounded-[2rem] border border-slate-100">
-                <div className="flex items-center gap-3">
-                  <Clock className={cn("h-5 w-5", timeLeft < 300 ? "text-red-600 animate-pulse" : "text-indigo-600")} />
+              <div className="flex items-center gap-3 sm:gap-8 bg-slate-50 px-3 sm:px-4 py-2 sm:py-4 rounded-2xl sm:rounded-[2rem] border border-slate-100 shrink-0">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <Clock className={cn("h-4 w-4 sm:h-5 sm:w-5", timeLeft < 60 ? "text-red-600 animate-pulse font-black" : timeLeft < 300 ? "text-amber-500 font-bold animate-pulse" : "text-indigo-600")} />
                   <div className="flex flex-col">
-                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">Time Left</span>
-                    <span className={cn("text-xl font-black tabular-nums tracking-tight", timeLeft < 300 ? "text-red-600" : "text-slate-900")}>
+                    <span className="hidden sm:block text-[8px] font-black uppercase tracking-widest text-slate-400">Time Left</span>
+                    <span className={cn("text-base sm:text-xl font-black tabular-nums tracking-tight", timeLeft < 60 ? "text-red-600 animate-pulse font-black" : timeLeft < 300 ? "text-amber-500 font-bold" : "text-slate-900")}>
                       {formatTime(timeLeft)}
                     </span>
                   </div>
                 </div>
-                <div className="h-10 w-[1px] bg-slate-200" />
-                <div className="flex items-center gap-3">
-                  <Target className="h-5 w-5 text-teal-600" />
+                <div className="h-6 sm:h-10 w-[1px] bg-slate-200" />
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <Target className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600" />
                   <div className="flex flex-col">
-                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">Progress</span>
-                    <span className="text-xl font-black tabular-nums tracking-tight text-slate-900">{currentQuestion + 1} / {quiz.questions.length}</span>
+                    <span className="hidden sm:block text-[8px] font-black uppercase tracking-widest text-slate-400">Progress</span>
+                    <span className="text-base sm:text-xl font-black tabular-nums tracking-tight text-slate-900">{currentQuestion + 1}<span className="text-slate-400 text-xs sm:text-base">/{quiz.questions.length}</span></span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1 sm:space-y-2">
               <div className="flex justify-between items-end">
-                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 italic">Exam Progress</span>
-                <span className="text-[10px] font-black tabular-nums uppercase tracking-widest text-slate-400">{Math.round(progress)}% Answered</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 italic">Progress</span>
+                <span className="text-[10px] font-black tabular-nums uppercase tracking-widest text-slate-400">{Math.round(progress)}%</span>
               </div>
-              <Progress value={progress} className="h-1.5 bg-slate-100" />
+              <Progress value={progress} className="h-1 sm:h-1.5 bg-slate-100" />
             </div>
           </div>
         </header>
 
         {/* Content Console - Scrollable Question List - Linear View */}
-        <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-10 relative group/console">
-          <div className="space-y-12 pb-24">
+        <main className="flex-1 overflow-y-auto scroll-smooth w-full touch-pan-y" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 py-6 sm:py-10 relative group/console">
+            <div className="space-y-8 sm:space-y-12 pb-24">
             {quiz.questions.map((question, qIdx) => qIdx === currentQuestion && (
               <motion.div
                 key={question.id}
@@ -694,20 +1083,20 @@ export default function StudentQuizPage() {
                 transition={{ duration: 0.4 }}
               >
                 <Card className={cn(
-                  "shadow-xl shadow-slate-200/50 border-slate-100 bg-white rounded-[2.5rem] overflow-hidden min-h-[400px] flex flex-col transition-all duration-500",
+                  "shadow-xl shadow-slate-200/50 border-slate-100 bg-white rounded-3xl sm:rounded-[2.5rem] overflow-hidden min-h-[300px] sm:min-h-[400px] flex flex-col transition-all duration-500",
                   currentQuestion === qIdx ? "ring-4 ring-indigo-50 border-indigo-200" : ""
                 )}>
-                  <CardHeader className="p-10 border-b border-slate-50 bg-[#FBFDFF] relative">
-                    <div className="flex gap-6">
-                      <div className="text-4xl font-black text-slate-100 italic tracking-tighter">Q{(qIdx + 1).toString().padStart(2, '0')}</div>
-                      <div className="space-y-4 pt-1 flex-1">
-                        <div className="text-2xl font-bold tracking-tight leading-relaxed text-slate-900">
+                  <CardHeader className="p-6 sm:p-10 border-b border-slate-50 bg-[#FBFDFF] relative">
+                    <div className="flex gap-3 sm:gap-6">
+                      <div className="text-2xl sm:text-4xl font-black text-slate-100 italic tracking-tighter shrink-0">Q{(qIdx + 1).toString().padStart(2, '0')}</div>
+                      <div className="space-y-3 sm:space-y-4 pt-1 flex-1">
+                        <div className="text-base sm:text-xl md:text-2xl font-bold tracking-tight leading-relaxed text-slate-900">
                           <FormattedText text={question.question} isQuestion={true} />
                         </div>
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="p-10 flex-1 flex flex-col justify-center">
+                  <CardContent className="p-4 sm:p-10 flex-1 flex flex-col justify-center">
                     {question.type === 'mcq' && question.options ? (
                       <RadioGroup
                         value={answers[qIdx]}
@@ -717,7 +1106,7 @@ export default function StudentQuizPage() {
                           setAnswers(newAns);
                           setCurrentQuestion(qIdx);
                         }}
-                        className="grid md:grid-cols-2 gap-4"
+                        className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4"
                       >
                         {question.options.map((option, index) => (
                           <div
@@ -729,21 +1118,21 @@ export default function StudentQuizPage() {
                               setCurrentQuestion(qIdx);
                             }}
                             className={cn(
-                              "flex items-center space-x-4 p-6 border-2 rounded-[1.75rem] cursor-pointer transition-all duration-300 group/option relative overflow-hidden active:scale-[0.98]",
+                              "flex items-center space-x-3 sm:space-x-4 p-4 sm:p-6 border-2 rounded-2xl sm:rounded-[1.75rem] cursor-pointer transition-all duration-300 group/option relative overflow-hidden active:scale-[0.98]",
                               answers[qIdx] === String.fromCharCode(65 + index)
                                 ? "border-indigo-600 bg-indigo-50/50 shadow-md shadow-indigo-100/50"
                                 : "border-slate-50 bg-[#FBFDFF] hover:border-slate-100 hover:bg-white"
                             )}
                           >
                             <div className={cn(
-                              "w-8 h-8 rounded-xl border-2 flex items-center justify-center font-black transition-all",
+                              "w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl border-2 flex items-center justify-center font-black text-xs transition-all shrink-0",
                               answers[qIdx] === String.fromCharCode(65 + index)
                                 ? "bg-indigo-600 border-indigo-600 text-white scale-110"
                                 : "bg-white border-slate-100 text-slate-300"
                             )}>
                               {String.fromCharCode(65 + index)}
                             </div>
-                            <Label className="text-sm font-bold cursor-pointer flex-1 group-hover/option:text-primary transition-colors whitespace-pre-wrap normal-case">
+                            <Label className="text-xs sm:text-sm font-bold cursor-pointer flex-1 group-hover/option:text-primary transition-colors whitespace-pre-wrap normal-case">
                               {option}
                             </Label>
                           </div>
@@ -771,27 +1160,27 @@ export default function StudentQuizPage() {
           </div>
 
           {/* Core Navigation Controls */}
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6 mt-12">
-            <div className="flex gap-4">
+          <div className="flex items-center justify-between gap-3 sm:gap-6 mt-8 sm:mt-12">
+            <div className="flex gap-2 sm:gap-4">
                 <Button
                   variant="ghost"
                   onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
                   disabled={currentQuestion === 0}
-                  className="h-14 px-8 font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-indigo-50 hover:text-indigo-600 transition-all active:scale-95 text-slate-400"
+                  className="h-12 sm:h-14 px-4 sm:px-8 font-bold uppercase tracking-widest text-[10px] rounded-xl sm:rounded-2xl hover:bg-indigo-50 hover:text-indigo-600 transition-all active:scale-95 text-slate-400"
                 >
-                  PREVIOUS
+                  PREV
                 </Button>
                 <Button
                   variant="ghost"
                   onClick={() => setCurrentQuestion(Math.min(quiz.questions.length - 1, currentQuestion + 1))}
                   disabled={currentQuestion === quiz.questions.length - 1}
-                  className="h-14 px-8 font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-indigo-50 hover:text-indigo-600 transition-all active:scale-95 text-slate-400"
+                  className="h-12 sm:h-14 px-4 sm:px-8 font-bold uppercase tracking-widest text-[10px] rounded-xl sm:rounded-2xl hover:bg-indigo-50 hover:text-indigo-600 transition-all active:scale-95 text-slate-400"
                 >
                   NEXT
                 </Button>
             </div>
 
-            <div className="h-14 bg-slate-50 px-8 rounded-2xl border border-slate-100 flex items-center gap-6">
+            <div className="hidden sm:flex h-14 bg-slate-50 px-8 rounded-2xl border border-slate-100 items-center gap-6">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
                 <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">SESSION BAR</span>
@@ -812,11 +1201,16 @@ export default function StudentQuizPage() {
               </div>
             </div>
 
+            {/* Mobile question counter */}
+            <div className="sm:hidden text-sm font-black text-slate-400">
+              {currentQuestion + 1}/{quiz.questions.length}
+            </div>
+
             <Button
               onClick={() => handleSubmitQuiz()}
               disabled={submitting}
               className={cn(
-                "h-14 px-12 font-black uppercase tracking-widest text-sm rounded-2xl transition-all active:scale-95 group",
+                "h-12 sm:h-14 px-6 sm:px-12 font-black uppercase tracking-widest text-xs sm:text-sm rounded-xl sm:rounded-2xl transition-all active:scale-95 group",
                 currentQuestion === quiz.questions.length - 1 ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl shadow-indigo-100" : "bg-slate-50 text-slate-400 border border-slate-100 hover:bg-slate-100"
               )}
             >
@@ -831,6 +1225,7 @@ export default function StudentQuizPage() {
           </div>
 
           {/* Enforcement of Linear Flow: Navigator Removed */}
+          </div>
         </main>
 
         <footer className="mt-auto border-t border-slate-100 py-10 px-6">
@@ -847,20 +1242,37 @@ export default function StudentQuizPage() {
         </footer>
 
         {/* Security Alert Modal */}
-        <Dialog open={showWarningModal} onOpenChange={(o) => { if (!o) { isSecurityPaused.current = false; setShowWarningModal(false); } }}>
-          <DialogContent className="rounded-3xl p-8 max-w-sm w-[90vw] border-none shadow-2xl">
-            <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-red-100">
-                <AlertTriangle className="w-10 h-10 text-red-600" />
+        <Dialog open={showWarningModal} onOpenChange={(o) => { if (!o) { isSecurityPaused.current = false; setShowWarningModal(false); setBlurIntensity(0); } }}>
+          <DialogContent className="rounded-3xl p-8 max-w-sm w-[90vw] border-none shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="text-center space-y-5">
+              <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center mx-auto border-2 border-red-100 shadow-lg">
+                <ShieldAlert className="w-10 h-10 text-red-600" />
               </div>
-              <h2 className="text-xl font-bold text-red-600 tracking-tight">Security Violation</h2>
-              <p className="text-slate-500 font-medium leading-relaxed text-sm">
-                Detected: <span className="text-red-600 font-bold block mt-1">"{lastViolation}"</span>. Please restore the secure environment.
-              </p>
-              <div className="pt-2">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Strike {warningCount} of 3</p>
-                <Button onClick={() => { isSecurityPaused.current = false; setShowWarningModal(false); }} className="w-full h-12 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-colors">I Understand</Button>
+              <div>
+                <h2 className="text-2xl font-black text-red-600 tracking-tight mb-1">⚠️ Security Violation</h2>
+                <p className="text-slate-500 text-sm font-bold uppercase tracking-widest">Strike {warningCount} of 3</p>
               </div>
+              <div className="bg-red-50/50 border border-red-100 rounded-2xl p-4 text-left">
+                <p className="text-[10px] text-red-500 font-black uppercase tracking-widest mb-1">Reason:</p>
+                <p className="text-red-700 font-bold text-sm">"{lastViolation}"</p>
+              </div>
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-sm text-slate-600 font-medium leading-relaxed">
+                Two more violations will auto-submit and permanently block your attempt.
+              </div>
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Strikes</p>
+                <div className="flex gap-2 justify-center">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className={cn('h-2 flex-1 rounded-full transition-all', i <= warningCount ? 'bg-red-500' : 'bg-slate-200')} />
+                  ))}
+                </div>
+              </div>
+              <Button
+                onClick={() => { isSecurityPaused.current = false; setShowWarningModal(false); setBlurIntensity(0); }}
+                className="w-full h-12 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-colors shadow-lg"
+              >
+                Understood — Resuming Exam
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

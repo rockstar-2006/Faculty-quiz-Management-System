@@ -73,6 +73,7 @@ const App = () => {
                             <Route path="/student/login" element={<StudentAppLogin />} />
                             <Route path="/student/reset-password/:token" element={<ResetPasswordPage type="student" />} />
                             <Route path="/quiz/share/:token" element={<StudentQuizPage />} />
+                            <Route path="/quiz/secure/attempt/:token" element={<StudentQuizPage />} />
 
                             <Route element={<ProtectedRoute role="student" />}>
                                 <Route path="/student/dashboard" element={<StudentDashboard />} />

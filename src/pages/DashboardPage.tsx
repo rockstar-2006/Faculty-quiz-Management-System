@@ -101,7 +101,7 @@ export default function DashboardPage() {
       variants={container}
       initial="hidden"
       animate="show"
-      className="p-6 md:p-8 space-y-10 max-w-7xl mx-auto"
+      className="p-4 md:p-6 lg:p-8 space-y-8 md:space-y-10 max-w-7xl mx-auto"
     >
       {/* Header */}
       <motion.div variants={item} className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -110,7 +110,7 @@ export default function DashboardPage() {
             <Sparkles className="w-4 h-4" />
             Faculty Management Hub
           </div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tighter uppercase italic">
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black tracking-tighter uppercase italic">
             Welcome back, <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Professor</span>
           </h1>
           <p className="text-muted-foreground text-lg font-medium max-w-2xl">
@@ -127,7 +127,7 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         {stats.map((stat) => (
           <motion.div key={stat.title} variants={item}>
             <Card className="relative overflow-hidden group hover:shadow-elevated transition-all duration-500 border-sidebar-border/50">

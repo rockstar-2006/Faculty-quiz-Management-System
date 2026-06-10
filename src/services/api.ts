@@ -254,6 +254,16 @@ export const quizAPI = {
       throw error;
     }
   },
+
+  sendWebLinks: async (data: { quizId: string; studentEmails: string[] }) => {
+    try {
+      const result = await httpClient.post('/quiz/send-web-links', data);
+      return result;
+    } catch (error: any) {
+      console.error('Error sending web links:', error);
+      throw error;
+    }
+  },
 };
 
 /* =========================

@@ -147,8 +147,13 @@ export default function StudentSecureQuiz() {
   const escapeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isOutsideAppRef = useRef(false);
   const warningCountRef = useRef(0);
+  const lastFocusEventTime = useRef(0); // debounce focus/blur events
   const [activeTab, setActiveTab] = useState<'question' | 'all'>('question');
   const [networkSecure, setNetworkSecure] = useState(true);
+  // Stable ref to handleSubmitQuiz to avoid stale closures in timer
+  const handleSubmitQuizRef = useRef<(auto?: boolean, reason?: string) => void>(() => {});
+  // Stable ref to handleFocusGain so overlay button can call it
+  const handleFocusGainRef = useRef<() => void>(() => {});
 
   // Persistence: Auto-Save to LocalStorage
   useEffect(() => {
@@ -443,7 +448,8 @@ export default function StudentSecureQuiz() {
           if (prev <= 1) {
             setIsBlocked(true);
             setBlurIntensity(25); // Maximum blur
-            handleSubmitQuiz(true, 'Total Escape Time Exceeded (30s)');
+            // Use ref to avoid stale closure
+            handleSubmitQuizRef.current(true, 'Total Escape Time Exceeded (30s)');
             if (escapeTimerRef.current) clearInterval(escapeTimerRef.current);
             return 0;
           }
@@ -471,12 +477,18 @@ export default function StudentSecureQuiz() {
   useEffect(() => {
     if (!quizStarted || quizSubmitted || isBlocked) return;
 
+    // Debounced focus loss: only trigger once per 1s window to prevent double-firing
     const handleFocusLoss = (reason: string) => {
       if (isSecurityPaused.current || isTransitioning.current || isBlocked) return;
-      if (isOutsideAppRef.current) return; // Already flagged
+      if (isOutsideAppRef.current) return; // Already flagged — don't double-count
+
+      const now = Date.now();
+      if (now - lastFocusEventTime.current < 800) return; // Debounce 800ms
+      lastFocusEventTime.current = now;
       
       console.log('🚨 VIOLATION DETECTED - Focus Loss:', reason);
       
+      isOutsideAppRef.current = true; // Set ref immediately before async setState
       setIsOutsideApp(true);
       setBlurIntensity(12); // Start blur
       toast.error('🚨 SURVEILLANCE ALERT', { 
@@ -489,6 +501,12 @@ export default function StudentSecureQuiz() {
     const handleFocusGain = () => {
       if (!isOutsideAppRef.current) return; // Not flagged, ignore
       if (isSecurityPaused.current) return; // Already handling a violation
+
+      const now = Date.now();
+      if (now - lastFocusEventTime.current < 800) return; // Debounce 800ms
+      lastFocusEventTime.current = now;
+
+      isOutsideAppRef.current = false; // Clear ref immediately before async setState
       setIsOutsideApp(false);
       setBlurIntensity(0); // Remove blur immediately
       setRemainingEscapeTime(30); // Reset escape timer
@@ -518,7 +536,7 @@ export default function StudentSecureQuiz() {
       if (next >= 3) {
         setIsBlocked(true);
         setBlurIntensity(20);
-        handleSubmitQuiz(true, 'Maximum Strikes Reached (Limit: 3)');
+        handleSubmitQuizRef.current(true, 'Maximum Strikes Reached (Limit: 3)');
       } else {
         isSecurityPaused.current = true;
         setShowWarningModal(true);
@@ -527,20 +545,34 @@ export default function StudentSecureQuiz() {
     };
 
     const handleBlur = () => {
-      if (!document.hasFocus()) {
-        handleFocusLoss('Focus lost to external app or notification');
-      }
+      // Only trigger if document genuinely lost focus (not just element focus change)
+      // Use a small timeout to avoid false positives from element switching
+      setTimeout(() => {
+        if (!document.hasFocus() && !isTransitioning.current) {
+          handleFocusLoss('Focus lost to external app or notification');
+        }
+      }, 150);
     };
 
     const handleVisibility = () => {
       if (document.hidden) {
         handleFocusLoss('Screen minimized or tab switch detected');
       } else {
-        handleFocusGain();
+        // Page visible again — only call handleFocusGain if we were flagged as outside
+        if (isOutsideAppRef.current) {
+          handleFocusGain();
+        }
       }
     };
     
-    const handleFocus = () => handleFocusGain();
+    const handleFocus = () => {
+      if (isOutsideAppRef.current && !document.hidden) {
+        handleFocusGain();
+      }
+    };
+
+    // Keep stable ref so the overlay button can trigger focus gain
+    handleFocusGainRef.current = handleFocusGain;
 
     const preventSecurityBreach = (e: KeyboardEvent) => {
       // Prevent F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U
@@ -578,9 +610,22 @@ export default function StudentSecureQuiz() {
     // 🔍 Enhanced Tamper-Resistant Proctoring Loop with App Overlay Detection
     const monitorSecurity = () => {
        if (quizStarted && !quizSubmitted && !isBlocked && !isTransitioning.current) {
-          if (!document.hasFocus()) {
-             if (!isOutsideAppRef.current) {
-                handleFocusLoss('Unauthorized application overlay or window detected');
+          // Detect floating app overlay: focus is gone but visibility is still true
+          // This is the ChatGPT floating window / overlay app scenario
+          if (!document.hasFocus() && !document.hidden) {
+             if (!isOutsideAppRef.current && !isSecurityPaused.current) {
+                // Don't re-trigger within debounce window
+                const now = Date.now();
+                if (now - lastFocusEventTime.current >= 800) {
+                  handleFocusLoss('Floating app or overlay window detected above exam');
+                }
+             }
+          }
+          // If focus returned (app no longer overlaid) and we had flagged it
+          else if (document.hasFocus() && !document.hidden && isOutsideAppRef.current) {
+             const now = Date.now();
+             if (now - lastFocusEventTime.current >= 800) {
+               handleFocusGain();
              }
           }
           
@@ -590,30 +635,31 @@ export default function StudentSecureQuiz() {
           const originalHeight = originalDimensions.current.height;
           const originalWidth = originalDimensions.current.width;
           
-          const isSplitScreen = currentHeight < (originalHeight * 0.7) || currentWidth < (originalWidth * 0.7);
-          
-          // If we were in split-screen but now back to normal → clear blur
-          if (!isSplitScreen && isOutsideAppRef.current) {
-             console.log('✅ Split-screen closed - clearing blur and violations', {
-                currentHeight,
-                currentWidth,
-                originalHeight,
-                originalWidth
-             });
-             setIsOutsideApp(false);
-             setBlurIntensity(0);
-             setRemainingEscapeTime(30);
-          } else if (isSplitScreen && !isOutsideAppRef.current && !isSecurityPaused.current) {
-             // Split-screen detected
-             console.warn('⚠️ Split-screen detected - triggering violation');
-             handleFocusLoss('Split-screen or floating app overlay detected');
+          if (originalHeight > 0 && originalWidth > 0) {
+            const isSplitScreen = currentHeight < (originalHeight * 0.7) || currentWidth < (originalWidth * 0.7);
+            
+            // If we were in split-screen but now back to normal → clear outside state
+            if (!isSplitScreen && isOutsideAppRef.current && !isSecurityPaused.current) {
+               // Don't clear here — wait for focus gain to issue the strike
+               // Just update dimensions reference
+            } else if (isSplitScreen && !isOutsideAppRef.current && !isSecurityPaused.current) {
+               // Split-screen detected
+               const now = Date.now();
+               if (now - lastFocusEventTime.current >= 800) {
+                 console.warn('⚠️ Split-screen detected - triggering violation');
+                 handleFocusLoss('Split-screen or floating app overlay detected');
+               }
+            }
           }
           
           // Network security check
           const conn = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
-          if (conn && (conn.type === 'vpn' || conn.rtt > 5000)) {
+          if (conn && conn.rtt > 5000) {
              setNetworkSecure(false);
-             triggerViolation('Secure network connection lost (VPN Detection)');
+             // Only trigger once, not on every poll
+             if (!isOutsideAppRef.current) {
+               triggerViolation('Secure network connection issue detected');
+             }
           }
        }
     };
@@ -743,13 +789,18 @@ export default function StudentSecureQuiz() {
     }
   }, [attemptId, answers, quizId, submitting, exitFullscreen]);
 
+  // Keep the ref in sync so escape timer and security monitor can call without stale closure
+  useEffect(() => {
+    handleSubmitQuizRef.current = handleSubmitQuiz;
+  }, [handleSubmitQuiz]);
+
   // Timer
   useEffect(() => {
     if (!quizStarted || quizSubmitted || isBlocked) return;
     const t = setInterval(() => {
       setTimeLeft(p => {
         if (p <= 1) {
-          handleSubmitQuiz(true, 'Time Out');
+          handleSubmitQuizRef.current(true, 'Time Out');
           return 0;
         }
         return p - 1;
@@ -760,7 +811,7 @@ export default function StudentSecureQuiz() {
 
   // 1. Loading
   if (loading) return (
-    <div className="h-screen flex flex-col items-center justify-center bg-white text-slate-800 gap-4">
+    <div className="h-[100dvh] flex flex-col items-center justify-center bg-white text-slate-800 gap-4">
       <Loader2 className="h-10 w-10 text-indigo-600 animate-spin" />
       <p className="text-xs font-bold tracking-widest text-slate-400 uppercase">Loading Quiz</p>
     </div>
@@ -768,43 +819,43 @@ export default function StudentSecureQuiz() {
 
   // 2. Pre-Quiz Entry
   if (!quizStarted && !quizSubmitted) return (
-    <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-6 text-slate-900">
-      <div className="max-w-md w-full space-y-8">
+    <div className="min-h-[100dvh] bg-[#F8FAFC] flex items-center justify-center p-4 sm:p-6 text-slate-900">
+      <div className="max-w-md w-full space-y-6 sm:space-y-8">
         <div className="text-center space-y-2">
-          <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 uppercase text-[10px] py-1 px-3 mb-4 font-bold">Assessment</Badge>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 leading-tight">{quiz?.title}</h1>
-          <div className="grid grid-cols-3 gap-2 mt-6">
-            <div className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Duration</p>
+          <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 uppercase text-[10px] py-1 px-3 mb-3 sm:mb-4 font-bold">Assessment</Badge>
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 leading-tight px-2">{quiz?.title}</h1>
+          <div className="grid grid-cols-3 gap-2 mt-4 sm:mt-6">
+            <div className="bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
+              <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Duration</p>
               <p className="text-sm font-bold text-slate-800">{quiz?.duration}m</p>
             </div>
-            <div className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Questions</p>
+            <div className="bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
+              <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Questions</p>
               <p className="text-sm font-bold text-slate-800">{quiz?.questionCount}</p>
             </div>
-            <div className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Points</p>
+            <div className="bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
+              <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Points</p>
               <p className="text-sm font-bold text-slate-800">{quiz?.totalMarks}</p>
             </div>
           </div>
         </div>
 
-        <Card className="border-slate-100 shadow-xl shadow-slate-200/50 rounded-3xl overflow-hidden mt-8 bg-white/70 backdrop-blur-sm">
-          <CardHeader className="bg-slate-50/50 border-b border-slate-100 p-6">
+        <Card className="border-slate-100 shadow-xl shadow-slate-200/50 rounded-3xl overflow-hidden mt-6 sm:mt-8 bg-white/70 backdrop-blur-sm">
+          <CardHeader className="bg-slate-50/50 border-b border-slate-100 p-4 sm:p-6">
             <div className="flex items-center gap-2 text-indigo-600">
                <Shield className="w-5 h-5" />
               <CardTitle className="text-sm font-bold uppercase tracking-tight">Secure Quiz</CardTitle>
              </div>
           </CardHeader>
-          <CardContent className="p-6 space-y-6">
-            <ul className="space-y-4">
+          <CardContent className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+            <ul className="space-y-3 sm:space-y-4">
               {[
                 { icon: Shield, text: "Stay within the exam interface" },
                 { icon: EyeOff, text: "Disable notifications to prevent focus loss" },
                 { icon: Info, text: "Three safety violations will end your session" }
               ].map((item, i) => (
                 <li key={i} className="flex items-center gap-3 text-xs font-semibold text-slate-600">
-                  <div className="w-6 h-6 rounded-lg bg-teal-50 flex items-center justify-center">
+                  <div className="w-6 h-6 rounded-lg bg-teal-50 flex items-center justify-center shrink-0">
                     {item.icon ? <item.icon className="w-3.5 h-3.5 text-teal-600" /> : <Shield className="w-3.5 h-3.5 text-teal-600" />}
                   </div>
                   {item.text}
@@ -816,7 +867,7 @@ export default function StudentSecureQuiz() {
               onClick={handleStartQuiz}
               disabled={isStarting || isBlocked}
               className={cn(
-                "w-full h-14 text-white rounded-2xl font-bold shadow-lg transition-all active:scale-[0.98]",
+                "w-full h-12 sm:h-14 text-white rounded-2xl font-bold shadow-lg transition-all active:scale-[0.98]",
                 isBlocked 
                   ? "bg-slate-300 cursor-not-allowed opacity-60" 
                   : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100"
@@ -838,14 +889,14 @@ export default function StudentSecureQuiz() {
   const resultPercentage = submissionResult?.percentage ?? (resultScore !== null && resultTotal ? Math.round((resultScore / resultTotal) * 100) : null);
 
   if (quizSubmitted) return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-6 text-slate-900 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
-      <div className="max-w-xl w-full text-center space-y-8 py-10">
-        <div className="w-20 h-20 bg-teal-500 rounded-[2rem] flex items-center justify-center mx-auto shadow-xl shadow-teal-100 mb-4 animate-in zoom-in-50 duration-500">
-          <CheckCircle2 className="w-10 h-10 text-white" />
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-6 text-slate-900 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
+      <div className="max-w-xl w-full text-center space-y-6 sm:space-y-8 py-8 sm:py-10">
+        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-teal-500 rounded-[1.5rem] sm:rounded-[2rem] flex items-center justify-center mx-auto shadow-xl shadow-teal-100 mb-3 sm:mb-4 animate-in zoom-in-50 duration-500">
+          <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10 text-white" />
         </div>
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 leading-tight">Assessment Submitted</h2>
-          <p className="text-slate-500 font-medium mt-2 leading-relaxed">Your responses have been synchronized with the faculty portal.</p>
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 leading-tight">Assessment Submitted</h2>
+          <p className="text-slate-500 font-medium mt-2 leading-relaxed text-sm sm:text-base">Your responses have been synchronized with the faculty portal.</p>
         </div>
 
         {/* Score Summary */}
@@ -1053,7 +1104,15 @@ export default function StudentSecureQuiz() {
 
       {/* Professional Blur Overlay with Warning */}
       {isOutsideApp && (
-        <div className="fixed inset-0 z-[100] bg-gradient-to-br from-black/95 via-red-900/90 to-black/95 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300">
+        <div 
+          className="fixed inset-0 z-[100] bg-gradient-to-br from-black/95 via-red-900/90 to-black/95 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300"
+          onClick={() => {
+            // If user taps this overlay and focus is back, allow them to dismiss
+            if (document.hasFocus()) {
+              handleFocusGainRef.current();
+            }
+          }}
+        >
           {/* Animated Warning Icon */}
           <div className="mb-8 relative">
             <div className="absolute inset-0 w-24 h-24 bg-red-600 rounded-full blur-2xl opacity-50 animate-pulse" />
@@ -1063,18 +1122,31 @@ export default function StudentSecureQuiz() {
           </div>
           
           {/* Warning Text */}
-          <h2 className="text-4xl font-black text-white tracking-tight mb-3 uppercase animate-in slide-in-from-top-4 duration-500">⚠️ SECURITY VIOLATION</h2>
-          <p className="text-red-200 font-bold text-base mb-12 max-w-sm leading-relaxed animate-in fade-in duration-700">
+          <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight mb-3 uppercase animate-in slide-in-from-top-4 duration-500">⚠️ SECURITY VIOLATION</h2>
+          <p className="text-red-200 font-bold text-sm mb-8 sm:mb-12 max-w-sm leading-relaxed animate-in fade-in duration-700">
             FOCUS LOSS DETECTED<br/>
-            <span className="text-white/70 text-sm">Return to application immediately or session will terminate</span>
+            <span className="text-white/70 text-xs sm:text-sm">Return to application immediately or session will terminate</span>
           </p>
           
           {/* Countdown Timer */}
-          <div className="mb-8 animate-in zoom-in duration-500">
-            <div className="text-8xl font-black text-white tabular-nums tracking-tighter drop-shadow-2xl font-mono">{remainingEscapeTime}s</div>
-            <p className="text-white/50 text-xs font-bold uppercase tracking-widest mt-4">Time Remaining</p>
+          <div className="mb-6 sm:mb-8 animate-in zoom-in duration-500">
+            <div className="text-6xl sm:text-8xl font-black text-white tabular-nums tracking-tighter drop-shadow-2xl font-mono">{remainingEscapeTime}s</div>
+            <p className="text-white/50 text-xs font-bold uppercase tracking-widest mt-3 sm:mt-4">Time Remaining</p>
           </div>
           
+          {/* Tap to return button — dismisses overlay when focus is actually back */}
+          <button
+            className="mt-4 px-8 py-3 bg-white/10 border border-white/20 rounded-2xl text-white font-bold text-sm uppercase tracking-widest hover:bg-white/20 active:scale-95 transition-all"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (document.hasFocus()) {
+                handleFocusGainRef.current();
+              }
+            }}
+          >
+            Tap to Return to Exam
+          </button>
+
           {/* Strike Warning */}
           <div className="flex justify-center gap-1.5 mt-8">
             {[1, 2, 3].map((i) => (
@@ -1093,69 +1165,69 @@ export default function StudentSecureQuiz() {
 
 
       {/* 📍 Header - Premium Two-Row Layout */}
-      <div className="flex flex-col bg-white border-b border-slate-100 relative z-30 shrink-0 pt-12 sm:pt-10">
+      <div className="flex flex-col bg-white border-b border-slate-100 relative z-30 shrink-0 pt-safe" style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 8px)' }}>
         {/* CRITICAL WARNING BANNER - Only show when outside app */}
         {isOutsideApp && (
-          <div className="px-6 py-3 bg-gradient-to-r from-red-600 via-red-600 to-red-700 border-b-4 border-red-900 animate-pulse flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1">
-              <ShieldAlert className="w-5 h-5 text-white flex-shrink-0 animate-bounce" />
-              <span className="text-sm font-black text-white uppercase tracking-widest">⏰ CRITICAL: TAB AWAY DETECTED</span>
+          <div className="px-4 py-2.5 bg-gradient-to-r from-red-600 via-red-600 to-red-700 border-b-4 border-red-900 animate-pulse flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-white flex-shrink-0 animate-bounce" />
+              <span className="text-xs font-black text-white uppercase tracking-widest truncate">⏰ TAB AWAY DETECTED</span>
             </div>
-            <div className="bg-red-900 rounded-lg px-4 py-2 flex items-center gap-2">
-              <span className="text-xl font-black text-white tabular-nums">{remainingEscapeTime}s</span>
-              <span className="text-xs font-bold text-red-100 uppercase">RETURN NOW</span>
+            <div className="bg-red-900 rounded-lg px-3 py-1.5 flex items-center gap-1.5 shrink-0">
+              <span className="text-lg font-black text-white tabular-nums">{remainingEscapeTime}s</span>
+              <span className="text-[10px] font-bold text-red-100 uppercase hidden sm:inline">RETURN NOW</span>
             </div>
           </div>
         )}
 
         {/* Row 1: Session Info */}
-        <div className="px-6 py-4 flex items-center justify-between gap-6">
-          <div className="flex items-center gap-5">
-             <div className="w-12 h-12 rounded-[1.25rem] bg-indigo-600 flex items-center justify-center font-black text-white shadow-xl shadow-indigo-100 border border-indigo-500">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 sm:gap-5 min-w-0">
+             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl sm:rounded-[1.25rem] bg-indigo-600 flex items-center justify-center font-black text-white shadow-xl shadow-indigo-100 border border-indigo-500 shrink-0 text-sm">
                {currentQuestion + 1}
              </div>
-             <div>
-               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Exam Session</p>
-               <h1 className="text-sm sm:text-base font-bold text-slate-900 leading-none truncate max-w-[200px]">{quiz?.title}</h1>
+             <div className="min-w-0">
+               <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Exam Session</p>
+               <h1 className="text-xs sm:text-sm md:text-base font-bold text-slate-900 leading-none truncate max-w-[140px] sm:max-w-[240px] md:max-w-none">{quiz?.title}</h1>
              </div>
           </div>
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col items-end shrink-0">
             <div className={cn(
-              "px-4 py-2.5 rounded-2xl font-black text-xs tabular-nums flex items-center gap-2 border shadow-sm transition-all",
-              timeLeft < 120 ? "bg-red-50 text-red-600 animate-pulse border-red-100" : "bg-indigo-50 text-indigo-600 border-indigo-100 text-indigo-700"
+              "px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl font-black text-xs tabular-nums flex items-center gap-1.5 sm:gap-2 border shadow-sm transition-all",
+              timeLeft < 120 ? "bg-red-50 text-red-600 animate-pulse border-red-100" : "bg-indigo-50 text-indigo-600 border-indigo-100"
             )}>
-              <Clock className="w-4 h-4" /> {formatTime(timeLeft)}
+              <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> {formatTime(timeLeft)}
             </div>
           </div>
         </div>
 
         {/* Row 2: Status Bar */}
-        <div className="px-6 py-3 bg-slate-50/80 flex items-center justify-between border-t border-slate-100/50 backdrop-blur-sm">
-          <div className="flex items-center gap-2.5">
+        <div className="px-4 sm:px-6 py-2 sm:py-3 bg-slate-50/80 flex items-center justify-between border-t border-slate-100/50 backdrop-blur-sm">
+          <div className="flex items-center gap-2">
             <div className="relative">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-600" />
-              <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-red-600 animate-ping opacity-40" />
+              <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-600" />
+              <div className="absolute inset-0 w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-600 animate-ping opacity-40" />
             </div>
-            <span className="text-[11px] font-black text-red-600 uppercase tracking-widest">Surveillance Active</span>
+            <span className="text-[10px] sm:text-[11px] font-black text-red-600 uppercase tracking-widest">Surveillance Active</span>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg shadow-sm">
-             <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
-             <span className="text-[10px] font-black text-slate-500 tabular-nums uppercase">
-               Buffer: <span className="text-red-700 font-black">{remainingEscapeTime}S</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 bg-white border border-slate-200 rounded-lg shadow-sm">
+             <ShieldAlert className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-red-500" />
+             <span className="text-[9px] sm:text-[10px] font-black text-slate-500 tabular-nums uppercase">
+               <span className="hidden sm:inline">Buffer: </span><span className="text-red-700 font-black">{remainingEscapeTime}S</span>
              </span>
           </div>
         </div>
 
-        <Progress value={((currentQuestion + 1) / (quiz?.questions?.length || 1)) * 100} className="h-1.5 bg-slate-100 rounded-none shadow-none z-20 shrink-0" />
+        <Progress value={((currentQuestion + 1) / (quiz?.questions?.length || 1)) * 100} className="h-1 sm:h-1.5 bg-slate-100 rounded-none shadow-none z-20 shrink-0" />
       </div>
 
       {/* 📝 Content - Amazon-Grade Smooth Scroll */}
       <main className="flex-1 overflow-y-auto scroll-smooth bg-white h-full touch-pan-y" style={{ WebkitOverflowScrolling: 'touch' }}>
-        <div className="px-6 sm:px-10 py-10 pb-96 max-w-2xl mx-auto w-full flex flex-col min-h-full">
-          <div className="flex-1 space-y-10 sm:space-y-14 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="px-4 sm:px-6 md:px-10 py-6 sm:py-10 pb-48 max-w-2xl mx-auto w-full flex flex-col min-h-full">
+          <div className="flex-1 space-y-8 sm:space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="space-y-3 sm:space-y-4">
               <Badge className="bg-teal-50 text-teal-600 border-none font-black text-[8px] sm:text-[9px] px-2.5 py-1 rounded-lg uppercase tracking-wider">{currentQ?.marks} Marks</Badge>
-              <div className="text-base sm:text-2xl font-black text-slate-900 leading-tight tracking-tight">
+              <div className="text-base sm:text-xl md:text-2xl font-black text-slate-900 leading-tight tracking-tight">
                 <FormattedText text={currentQ?.question || ''} isQuestion={true} />
               </div>
             </div>
@@ -1232,7 +1304,10 @@ export default function StudentSecureQuiz() {
       </main>
 
       {/* 🎮 Controls - High Performance Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 p-5 sm:p-8 pb-10 sm:pb-14 bg-white/95 backdrop-blur-2xl border-t border-slate-100 flex items-center justify-between gap-4 z-40 shrink-0">
+      <div 
+        className="fixed bottom-0 left-0 right-0 px-4 sm:px-8 pt-4 sm:pt-5 bg-white/95 backdrop-blur-2xl border-t border-slate-100 flex items-center justify-between gap-3 sm:gap-4 z-40 shrink-0"
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px) + 16px, 20px)' }}
+      >
         <Button
           variant="secondary"
           disabled={currentQuestion === 0}
@@ -1240,13 +1315,13 @@ export default function StudentSecureQuiz() {
             setCurrentQuestion(p => p - 1);
             document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
           }}
-          className="h-14 sm:h-16 px-5 sm:px-10 rounded-2xl sm:rounded-3xl font-black text-slate-500 hover:text-indigo-600 bg-slate-50 border border-slate-100 transition-all active:scale-95 flex items-center gap-2"
+          className="h-12 sm:h-14 md:h-16 px-4 sm:px-6 md:px-10 rounded-2xl sm:rounded-3xl font-black text-slate-500 hover:text-indigo-600 bg-slate-50 border border-slate-100 transition-all active:scale-95 flex items-center gap-2"
         >
-          <ArrowLeft className="w-5 h-5" /> <span className="hidden sm:inline uppercase tracking-widest text-[10px]">Back</span>
+          <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" /> <span className="hidden sm:inline uppercase tracking-widest text-[10px]">Back</span>
         </Button>
 
         <div className="flex-1 flex flex-col items-center justify-center">
-          <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.3em] mb-1">Current Question</p>
+          <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] sm:tracking-[0.3em] mb-0.5 sm:mb-1 hidden xs:block">Question</p>
           <p className="text-sm font-black text-slate-900 tracking-tight select-none">
             {currentQuestion + 1} <span className="text-slate-300 px-1">/</span> {quiz?.questions?.length || 1}
           </p>
@@ -1258,15 +1333,15 @@ export default function StudentSecureQuiz() {
               setCurrentQuestion(p => p + 1);
               document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            className="h-14 sm:h-16 px-8 sm:px-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl sm:rounded-3xl font-black shadow-xl shadow-indigo-200 transition-all active:scale-95 flex items-center gap-3 uppercase tracking-widest text-[11px]"
+            className="h-12 sm:h-14 md:h-16 px-6 sm:px-10 md:px-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl sm:rounded-3xl font-black shadow-xl shadow-indigo-200 transition-all active:scale-95 flex items-center gap-2 uppercase tracking-widest text-[10px] sm:text-[11px]"
           >
-            Next <ArrowRight className="w-5 h-5" />
+            Next <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
           </Button>
         ) : (
           <Button
             onClick={() => setShowSubmitConfirm(true)}
             disabled={submitting}
-            className="h-14 sm:h-16 px-8 sm:px-14 bg-slate-900 hover:bg-black text-white rounded-2xl sm:rounded-3xl font-black shadow-2xl transition-all active:scale-95 uppercase tracking-widest text-[11px]"
+            className="h-12 sm:h-14 md:h-16 px-6 sm:px-10 md:px-14 bg-slate-900 hover:bg-black text-white rounded-2xl sm:rounded-3xl font-black shadow-2xl transition-all active:scale-95 uppercase tracking-widest text-[10px] sm:text-[11px]"
           >
             Finish Exam
           </Button>

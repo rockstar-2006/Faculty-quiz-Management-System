@@ -1,9 +1,9 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { GraduationCap, LayoutDashboard, Users, FileText, Bookmark, LogOut, Menu, Sparkles, Settings } from 'lucide-react';
+import { GraduationCap, LayoutDashboard, Users, FileText, Bookmark, LogOut, Menu, Sparkles, Settings, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const navItems = [
@@ -20,25 +20,33 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close mobile drawer on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  // Close mobile drawer on resize to desktop
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth >= 768) setMobileOpen(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  return (
-    <motion.aside
-      initial={false}
-      animate={{ width: isCollapsed ? 70 : 260 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className={cn(
-        'bg-sidebar text-sidebar-foreground border-r border-sidebar-border flex flex-col relative z-20 shadow-xl overflow-hidden'
-      )}
-    >
+  const SidebarContent = ({ mobile = false }: { mobile?: boolean }) => (
+    <>
       {/* Header */}
       <div className="p-4 border-b border-sidebar-border/50 flex items-center justify-between h-16">
         <AnimatePresence mode="wait">
-          {!isCollapsed && (
+          {(!isCollapsed || mobile) && (
             <motion.div
               key="logo"
               initial={{ opacity: 0, x: -10 }}
@@ -66,18 +74,29 @@ export function Sidebar() {
           )}
         </AnimatePresence>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="hover:bg-sidebar-accent/50 transition-colors"
-        >
-          <Menu className="h-5 w-5 text-sidebar-foreground/70" />
-        </Button>
+        {mobile ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileOpen(false)}
+            className="hover:bg-sidebar-accent/50 transition-colors ml-auto"
+          >
+            <X className="h-5 w-5 text-sidebar-foreground/70" />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="hover:bg-sidebar-accent/50 transition-colors"
+          >
+            <Menu className="h-5 w-5 text-sidebar-foreground/70" />
+          </Button>
+        )}
       </div>
 
       {/* User Profile */}
-      {!isCollapsed && user && (
+      {(!isCollapsed || mobile) && user && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -113,19 +132,19 @@ export function Sidebar() {
               className="block relative group"
             >
               <motion.div
-                whileHover={{ x: isCollapsed ? 0 : 4 }}
+                whileHover={{ x: (isCollapsed && !mobile) ? 0 : 4 }}
                 whileTap={{ scale: 0.98 }}
                 className={cn(
                   'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 relative overflow-hidden',
                   isActive
                     ? 'text-white'
                     : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/30',
-                  isCollapsed && 'justify-center'
+                  (isCollapsed && !mobile) && 'justify-center'
                 )}
               >
                 {isActive && (
                   <motion.div
-                    layoutId="activeNav"
+                    layoutId={mobile ? "activeNavMobile" : "activeNav"}
                     className="absolute inset-0 gradient-primary -z-10 shadow-lg"
                     transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                   />
@@ -136,15 +155,15 @@ export function Sidebar() {
                   isActive ? "text-white" : "group-hover:text-primary"
                 )} />
 
-                {!isCollapsed && (
+                {(!isCollapsed || mobile) && (
                   <span className="text-sm font-medium tracking-tight whitespace-nowrap">
                     {item.label}
                   </span>
                 )}
 
-                {isActive && !isCollapsed && (
+                {isActive && (!isCollapsed || mobile) && (
                   <motion.div
-                    layoutId="activeIndicator"
+                    layoutId={mobile ? "activeIndicatorMobile" : "activeIndicator"}
                     className="ml-auto w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_white]"
                   />
                 )}
@@ -161,14 +180,67 @@ export function Sidebar() {
           onClick={handleLogout}
           className={cn(
             'w-full justify-start gap-3 hover:bg-destructive/10 hover:text-destructive group rounded-xl transition-all h-11',
-            isCollapsed && 'justify-center px-0'
+            (isCollapsed && !mobile) && 'justify-center px-0'
           )}
         >
           <LogOut className="h-5 w-5 flex-shrink-0" />
-          {!isCollapsed && <span className="text-sm font-semibold">Logout</span>}
+          {(!isCollapsed || mobile) && <span className="text-sm font-semibold">Logout</span>}
         </Button>
       </div>
-    </motion.aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile hamburger button - visible only on small screens */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="md:hidden fixed top-4 left-4 z-50 w-10 h-10 bg-sidebar rounded-xl flex items-center justify-center shadow-lg border border-sidebar-border/50"
+        aria-label="Open menu"
+      >
+        <Menu className="h-5 w-5 text-sidebar-foreground" />
+      </button>
+
+      {/* Mobile overlay backdrop */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Mobile drawer */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.aside
+            initial={{ x: -280 }}
+            animate={{ x: 0 }}
+            exit={{ x: -280 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="md:hidden fixed top-0 left-0 h-full w-[280px] z-50 bg-sidebar text-sidebar-foreground flex flex-col shadow-2xl overflow-hidden"
+          >
+            <SidebarContent mobile />
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {/* Desktop sidebar */}
+      <motion.aside
+        initial={false}
+        animate={{ width: isCollapsed ? 70 : 260 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+        className={cn(
+          'hidden md:flex bg-sidebar text-sidebar-foreground border-r border-sidebar-border flex-col relative z-20 shadow-xl overflow-hidden'
+        )}
+      >
+        <SidebarContent />
+      </motion.aside>
+    </>
   );
 }
 

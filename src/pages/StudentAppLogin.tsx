@@ -93,7 +93,7 @@ const StudentAppLogin = () => {
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: "circOut" }}
-          className="text-center mb-10"
+          className="text-center mb-6 sm:mb-10"
         >
           <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-[2rem] shadow-xl shadow-indigo-100/50 border border-slate-50 mb-8 transform hover:scale-110 transition-transform">
             <GraduationCap className="w-10 h-10 text-indigo-600" />
@@ -103,7 +103,7 @@ const StudentAppLogin = () => {
         </motion.div>
 
         <Card className="border-slate-100/80 shadow-2xl shadow-slate-200/50 bg-white/90 backdrop-blur-xl rounded-[2.5rem] overflow-hidden border-2 animate-in zoom-in-95 duration-500">
-          <CardHeader className="p-10 pb-4">
+          <CardHeader className="p-6 sm:p-10 pb-4">
             <CardTitle className="text-xl font-bold text-slate-800 tracking-tight">
               {showForgot ? 'Account Recovery' : 'Sign In'}
             </CardTitle>
@@ -112,7 +112,7 @@ const StudentAppLogin = () => {
             </CardDescription>
           </CardHeader>
 
-          <CardContent className="p-10 pt-4">
+          <CardContent className="p-6 sm:p-10 pt-4">
             <AnimatePresence mode="wait">
               {showForgot ? (
                 <motion.form
@@ -233,7 +233,7 @@ const StudentAppLogin = () => {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.8 }}
-          className="mt-12 flex items-start gap-5 p-6 bg-white/50 border border-slate-100 rounded-3xl backdrop-blur-sm"
+          className="mt-8 sm:mt-12 flex items-start gap-4 sm:gap-5 p-4 sm:p-6 bg-white/50 border border-slate-100 rounded-3xl backdrop-blur-sm"
         >
           <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center shrink-0 border border-indigo-100">
             <Info className="w-6 h-6 text-indigo-600" />

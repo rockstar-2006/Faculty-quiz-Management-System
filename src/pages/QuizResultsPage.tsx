@@ -256,9 +256,9 @@ export default function QuizResultsPage() {
       variants={containerVariants}
       initial="hidden"
       animate="show"
-      className="p-6 md:p-8 space-y-10 max-w-7xl mx-auto"
+      className="p-4 md:p-6 lg:p-8 space-y-8 md:space-y-10 max-w-7xl mx-auto"
     >
-      <motion.div variants={itemVariants} className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+      <motion.div variants={itemVariants} className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 md:gap-6">
         <div className="space-y-3">
           <Button variant="ghost" size="sm" onClick={() => navigate('/results')} className="h-8 px-0 text-muted-foreground hover:text-primary transition-colors font-black uppercase text-[10px] tracking-widest gap-2">
             <ArrowLeft className="w-3 h-3" /> Back to Reports
@@ -267,7 +267,7 @@ export default function QuizResultsPage() {
             <Activity className="w-4 h-4" />
             Student Performance Analysis
           </div>
-          <h1 className="text-3xl md:text-5xl font-black tracking-tighter uppercase italic truncate max-w-2xl">
+          <h1 className="text-2xl md:text-3xl lg:text-5xl font-black tracking-tighter uppercase italic truncate max-w-2xl">
             {quizTitle || 'Assessment Module'}
           </h1>
           {autoRefresh && (
@@ -277,24 +277,24 @@ export default function QuizResultsPage() {
           )}
         </div>
 
-        <div className="flex gap-4 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+        <div className="flex flex-wrap gap-3 w-full md:w-auto">
           <Button
             onClick={() => setAutoRefresh(!autoRefresh)}
             variant="outline"
             className={cn(
-              "h-14 px-6 border-sidebar-border/50 font-black uppercase text-[10px] tracking-widest transition-all",
+              "h-12 md:h-14 px-4 md:px-6 border-sidebar-border/50 font-black uppercase text-[10px] tracking-widest transition-all",
               autoRefresh ? "bg-primary/5 text-primary border-primary/20" : "opacity-60"
             )}
           >
             {autoRefresh ? 'Sync On' : 'Sync Off'}
           </Button>
-          <Button onClick={() => handleDownloadExcel(false)} disabled={downloading || attempts.length === 0} className="h-14 px-8 gradient-primary font-black uppercase tracking-widest shadow-glow">
-            {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileSpreadsheet className="w-5 h-5 mr-3" />}
-            Export Summary
+          <Button onClick={() => handleDownloadExcel(false)} disabled={downloading || attempts.length === 0} className="h-12 md:h-14 px-4 md:px-8 gradient-primary font-black uppercase tracking-widest shadow-glow">
+            {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileSpreadsheet className="w-5 h-5 mr-2 md:mr-3" />}
+            Export
           </Button>
-          <Button onClick={() => handleDownloadExcel(true)} variant="outline" disabled={downloading || attempts.length === 0} className="h-14 px-6 border-sidebar-border/50 font-black uppercase text-[10px] tracking-widest">
-            <Download className="w-4 h-4 mr-3" />
-            Detailed Report
+          <Button onClick={() => handleDownloadExcel(true)} variant="outline" disabled={downloading || attempts.length === 0} className="h-12 md:h-14 px-4 md:px-6 border-sidebar-border/50 font-black uppercase text-[10px] tracking-widest">
+            <Download className="w-4 h-4 mr-2 md:mr-3" />
+            Detailed
           </Button>
         </div>
       </motion.div>
